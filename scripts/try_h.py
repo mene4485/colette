@@ -17,6 +17,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import colette.archfix  # noqa: E402,F401  (relance en arm64 si Rosetta)
+
 from dotenv import load_dotenv  # noqa: E402
 from loguru import logger  # noqa: E402
 
