@@ -627,7 +627,20 @@ class CloudHandler(Handler):
     """Maquette servie sans disque (Vercel). Avec COLETTE_BACKEND_URL, chaque page charge la bulle
     Colette (widget.js) reliée au backend hébergé (voix + agent H en navigateur cloud)."""
 
+    def _restore_path(self) -> None:
+        """Vercel réécrit toute URL vers /api/index?__path=/<chemin> : on retrouve le vrai chemin."""
+        u = urlparse(self.path)
+        q = parse_qs(u.query, keep_blank_values=True)
+        if "__path" not in q:
+            return
+        path = q.pop("__path")[0] or "/"
+        if not path.startswith("/"):
+            path = "/" + path
+        rest = "&".join(f"{quote(k)}={quote(v)}" for k, vs in q.items() for v in vs)
+        self.path = path + ("?" + rest if rest else "")
+
     def _prepare(self) -> None:
+        self._restore_path()
         self.store = CookieStore(self._cookies())  # type: ignore[assignment]
         self._agent = "agent=1" in (urlparse(self.path).query or "") or AGENT_COOKIE in self._cookies()
 
