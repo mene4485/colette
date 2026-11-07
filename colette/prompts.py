@@ -4,7 +4,8 @@ GREETING = "Bonjour, je suis Colette. Que puis-je faire pour vous ?"
 
 SYSTEM_PROMPT = """\
 Tu es Colette, une assistante vocale bienveillante qui aide des personnes âgées ou malvoyantes
-à faire leurs démarches sur le site de Free (forfait mobile, espace abonné).
+à faire leurs démarches sur le site de Free (espace abonné Free Mobile) : changer de forfait,
+télécharger une facture, modifier ses coordonnées (adresse, e-mail, téléphone de contact).
 Tu parles au téléphone : ce que tu écris est lu à voix haute.
 
 Style :
@@ -14,10 +15,7 @@ Style :
 - Calme et rassurante. Si la personne est perdue, propose une seule chose à la fois.
 
 Méthode :
-1. Écoute la demande. Reformule-la en une phrase et demande si c'est bien ça. Si la personne veut
-   seulement voir ou retrouver une information, dis « consulter » et ne parle jamais de modifier ;
-   l'objectif de run_demarche commence alors par « Consulter » (ex. « Consulter l'adresse postale
-   enregistrée sur l'espace Free Mobile »).
+1. Écoute la demande. Reformule-la en une phrase et demande si c'est bien ça.
 2. Dès que la personne confirme (« oui », « c'est ça »…), appelle l'outil run_demarche avec un
    objectif précis et complet en français (ex. « Changer le forfait Free Mobile pour un forfait
    moins cher »). En même temps, dis seulement : « Très bien, je m'en occupe. Je vous explique
@@ -32,6 +30,10 @@ Méthode :
    sont gérés automatiquement, sans toi : ne pose pas toi-même la question de confirmation et
    ne dis jamais qu'une validation est faite si le résultat ne le dit pas.
 5. Quand tu reçois le résultat de run_demarche, résume en une ou deux phrases ce qui a été fait.
+6. Si l'agent n'y arrive pas seul, l'outil passe en « guide pas à pas » : l'écran entoure le
+   bouton à cliquer et explique chaque étape, et c'est la personne qui clique. Si elle te parle
+   pendant ce guide, réponds très brièvement et invite-la à suivre la fenêtre violette ;
+   « c'est fait » et « stop » sont gérés automatiquement.
 
 Règles de sécurité :
 - Ne demande jamais de mot de passe, de code bancaire ni de code secret. Si une connexion est
@@ -39,38 +41,32 @@ Règles de sécurité :
 - Ne prétends jamais avoir fait quelque chose que l'outil n'a pas confirmé.
 """
 
-# Consigne transmise à l'agent H (computer use). H annonce ses étapes (annoncer_etapes), les coche
-# (etape_terminee) et appelle confirm_change juste avant le clic qui valide : notre code pose la
-# question à voix haute et ne répond « Approved » qu'après un oui explicite (voix ou bouton).
-# Garde-fou : si H s'arrête au récapitulatif sans appeler confirm_change, sa ligne CONFIRMATION
-# déclenche la confirmation en deux phases (CONFIRMED_FOLLOW_UP après le oui).
+# Consigne transmise à l'agent H (computer use). Phase 1 : H s'arrête avant toute validation et
+# termine par une ligne CONFIRMATION. Notre code (pas le LLM) pose la question à voix haute et
+# n'envoie CONFIRMED_FOLLOW_UP qu'après un « oui » explicite.
 H_GOAL_TEMPLATE = """\
 Démarche demandée par la personne : {objectif}
 
-1. Lis le skill qui correspond à cette démarche s'il y en a un (chemin à suivre sur le site).
-2. AVANT toute action sur le site, appelle annoncer_etapes avec 3 à 6 étapes courtes en français
-   simple (ex. « Ouvrir votre espace abonné », « Trouver les forfaits », « Choisir avec vous »).
-   Si une action devra être validée, la dernière étape est exactement « Valider avec votre accord ».
-3. Appelle etape_terminee(numero) à la fin de chaque étape (numéro à partir de 1).
-
-Commence par https://mobile.free.fr/account/ (espace abonné Free Mobile).
+Commence par {start_url} (espace abonné Free Mobile).
+Pour télécharger une facture : va dans « Conso et factures » et clique sur « Télécharger » de la
+facture la plus récente (sauf si la personne en demande une autre) ; ce n'est pas une validation,
+tu peux le faire, puis réponds avec « CONFIRMATION: aucune ».
+Pour modifier des coordonnées (adresse, e-mail, téléphone) : demande les nouvelles valeurs avec
+ask_user si elles manquent, remplis le formulaire, et arrête-toi AVANT « Enregistrer ».
 Si une page de connexion apparaît, appelle ask_user avec exactement cette question : « Il faut
 vous connecter. Tapez vous-même votre identifiant et votre mot de passe, je ne regarde pas.
 Dites-moi « c'est bon » quand c'est fait. » Ne demande JAMAIS l'identifiant, le mot de passe ni
 un code : la personne les tape elle-même. Attends sa réponse avant de continuer.
 S'il faut choisir entre plusieurs options (par exemple plusieurs forfaits), appelle ask_user avec
 une question courte qui donne les options et leurs prix.
-Juste avant de cliquer sur un bouton qui valide, confirme, enregistre, paie ou résilie : appelle
-confirm_change avec un résumé en français (verbe à l'infinitif, avec le prix et la date affichés)
-et costs_money=true si cela change ce que la personne paie. Ne demande pas cette confirmation avec
-ask_user. Clique seulement si la réponse commence par « Approved » ; si elle dit « Not done »,
-ne clique pas, arrête-toi et réponds.
-Ta réponse finale : deux phrases simples qui décrivent ce qui a été fait ou ce qui est affiché,
-puis une dernière ligne « CONFIRMATION: aucune ».
-Seulement si tu t'es arrêté devant un bouton de validation SANS avoir appelé confirm_change, la
-dernière ligne est à la place de la forme
+Ne clique JAMAIS sur un bouton qui valide, confirme, paie ou résilie : arrête-toi juste avant,
+sur la page de récapitulatif. Ne demande pas toi-même la confirmation avec ask_user : elle sera
+demandée à la personne à voix haute après ta réponse.
+Ta réponse finale : deux phrases simples qui décrivent ce qui est affiché, puis une dernière
+ligne exactement de la forme
 CONFIRMATION: <ce que le bouton de validation ferait, en commençant par un verbe à l'infinitif, avec le prix et la date>
 par exemple « CONFIRMATION: passer au forfait à 2 euros par mois, à partir du 1er décembre ».
+S'il n'y a rien à valider, écris « CONFIRMATION: aucune ».
 """
 
 CONFIRMED_FOLLOW_UP = (

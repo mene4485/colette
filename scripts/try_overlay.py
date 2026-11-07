@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import signal
 import sys
 from pathlib import Path
 
@@ -27,6 +26,9 @@ load_dotenv(ROOT / "colette" / ".env")
 load_dotenv(ROOT / ".env")
 
 from colette.chrome import ensure_chrome  # noqa: E402
+from colette.platform_compat import add_stop_handler, setup_console  # noqa: E402
+
+setup_console()
 from colette.overlay import OverlayInjector  # noqa: E402
 from colette.state import StateServer  # noqa: E402
 
@@ -138,7 +140,7 @@ async def h_flow(sc: Scenario, runner) -> None:
             while not answer_file.exists():
                 await asyncio.sleep(1)
             await asyncio.sleep(0.2)
-            answer = answer_file.read_text().strip()
+            answer = answer_file.read_text(encoding="utf-8").strip()
             answer_file.unlink(missing_ok=True)
         s.set_status("working")
         return answer or "C'est fait."
@@ -203,7 +205,7 @@ async def main() -> None:
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGINT, stop.set)
+    add_stop_handler(loop, stop.set)
     logger.info("Prêt. Ouvre {} dans le Chrome :9222 et clique sur la bulle. Ctrl+C pour quitter.", args.url)
     await stop.wait()
 

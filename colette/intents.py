@@ -1,7 +1,8 @@
 """Commandes vocales déterministes : oui / non / stop / pause / reprise, reconnues AVANT le LLM.
 
-`parse_intent(text, context)` → "yes" | "no" | "stop" | "pause" | "resume" | None
+`parse_intent(text, context)` → "yes" | "no" | "stop" | "pause" | "resume" | "next" | None
 Contextes (ce que Colette attend) :
+- "guide"   : guide manuel pas à pas → next (« c'est fait », « suivant ») / stop
 - "confirm" : carte OUI/NON affichée → yes / no / stop / pause
 - "working" : démarche en cours → stop / pause
 - "paused"  : démarche en pause → resume / stop
@@ -48,6 +49,10 @@ NEGATED = ("pas d accord", "ne confirme pas", "ne confirmez pas", "ne valide pas
            "je ne veux pas", "veux pas", "c est pas bon", "ce n est pas bon", "n est pas bon")
 
 
+NEXT = ("suivant", "etape suivante", "c est fait", "c est bon", "voila", "j ai clique", "j ai fini",
+        "j ai tape", "et maintenant", "et ensuite", "ok c est fait")
+
+
 def parse_intent(text: str, context: str = "idle") -> Optional[str]:
     norm = normalize(text)
     if not norm:
@@ -55,6 +60,10 @@ def parse_intent(text: str, context: str = "idle") -> Optional[str]:
     # « Stop » / « arrêtez » partout. « Arrêtez » seul en pleine confirmation = stop aussi.
     if _has(norm, STOP):
         return "stop"
+    if context == "guide":  # guide manuel : la personne dit qu'elle a fait l'étape
+        if _has(norm, NEGATED) or _has(norm, ("pas encore", "je trouve pas", "je ne trouve pas")):
+            return None
+        return "next" if _has(norm, NEXT) else None
     if context == "confirm":
         if _has(norm, NEGATED) or _has(norm, NO):
             return "no"
@@ -91,18 +100,3 @@ def is_noise(text: str) -> bool:
     if _has(norm, HALLUCINATIONS):
         return True
     return all(w in FILLERS for w in norm.split())
-
-
-# Réponse « c'est fait » à une question de connexion (la personne tape elle-même ses identifiants).
-LOGIN_DONE = ("c est bon", "c est fait", "voila", "ok", "okay", "d accord", "je suis connecte",
-              "je suis connectee", "connecte", "connectee", "ca y est", "c bon", "termine", "fini",
-              "j ai fini", "oui", "c est ok", "vas y", "allez y", "continue", "continuez", "go")
-
-
-def is_login_question(question: str) -> bool:
-    norm = normalize(question)
-    return "connecter" in norm or "mot de passe" in norm or "identifiant" in norm
-
-
-def is_login_done(text: str) -> bool:
-    return _has(normalize(text), LOGIN_DONE)

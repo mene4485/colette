@@ -39,6 +39,14 @@ CASES = [
     ("Bonnet", "confirm", None),     # « non » est un mot entier, pas une sous-chaîne
     ("Ouistiti", "confirm", None),
     ("Continuer la démarche", "idle", None),  # hors pause : part au LLM
+    # Guide manuel
+    ("C'est fait.", "guide", "next"),
+    ("Voilà, j'ai cliqué", "guide", "next"),
+    ("Suivant", "guide", "next"),
+    ("Stop, arrêtez", "guide", "stop"),
+    ("Je ne trouve pas le bouton", "guide", None),
+    ("C'est pas encore fait", "guide", None),
+    ("Où est le bouton ?", "guide", None),
 ]
 
 NOISE = ["", "   ", ".", "Euh", "euh...", "Hum hum", "Bah", "Sous-titrage ST' 501", "a", "Merci."]

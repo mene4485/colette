@@ -22,8 +22,6 @@ from colette.h_agent import Step
 NOISE_TOOLS = {
     "wait_web", "press_keys_web", "refresh_web", "web_fetch", "switch_tab_web", "scroll_web",
     "ctrl_f_web", "go_back_web", "back_web", "answer", "ask_user",
-    "annoncer_etapes", "etape_terminee", "confirm_change", "load_skill", "read_skill", "use_skill",
-    "update_plan",
 }
 
 PROMPT = """\

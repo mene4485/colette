@@ -9,7 +9,6 @@ Les events bruts sont écrits dans logs/h_events_*.jsonl.
 from __future__ import annotations
 
 import asyncio
-import signal
 import sys
 import time
 from pathlib import Path
@@ -26,6 +25,9 @@ load_dotenv(ROOT / "colette" / ".env")
 load_dotenv(ROOT / ".env")
 
 from colette.h_agent import DemarcheRunner, Step  # noqa: E402
+from colette.platform_compat import add_stop_handler, setup_console  # noqa: E402
+
+setup_console()
 
 GOAL = (
     "Va sur https://mobile.free.fr et ouvre l'espace abonné (Mon compte). "
@@ -61,7 +63,7 @@ async def main() -> None:
         while not answer_file.exists():
             await asyncio.sleep(1)
         await asyncio.sleep(0.2)
-        text = answer_file.read_text().strip()
+        text = answer_file.read_text(encoding="utf-8").strip()
         answer_file.unlink(missing_ok=True)
         print(f"↳ Réponse : {text}", flush=True)
         return text or "C'est fait."
@@ -77,7 +79,7 @@ async def main() -> None:
         else:
             raise SystemExit(130)
 
-    loop.add_signal_handler(signal.SIGINT, on_sigint)
+    add_stop_handler(loop, on_sigint)
 
     try:
         answer = await runner.run(goal, on_step=on_step, ask_user=ask_user)

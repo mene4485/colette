@@ -1,191 +1,99 @@
-/* Colette — panneau injecté à chaque page (CDP). Idempotent, top frame uniquement, Shadow DOM.
- * Rendu 100 % depuis l'état serveur (StateServer) ; les boutons envoient des messages.
+/* Colette — bulle injectée à chaque page (CDP). Idempotente, top frame uniquement, Shadow DOM.
+ * Rendu 100 % depuis l'état serveur ; les boutons envoient des messages.
  * Transport : binding CDP window.__coletteSend + window.__colette.onState (Chrome bloque
- * ws://localhost depuis un site public) ; sinon WebSocket ws://localhost:8765 (maquette locale).
- *
- * Écrans (maquettes v2) : panneau latéral droit pleine hauteur, la page est rétrécie (jamais grisée).
- *   02 ouverte (gros micro rond + raccourcis) · 03/04 conversation en continu (bulles Colette / Vous)
- *   05 navigue (cadre dégradé autour de la page, « Je clique ici », panneau non cliquable sauf
- *   Pause / Arrêter) · 06 votre accord · 07 c'est fait · 10 échec
- */
+ * ws://localhost depuis un site public) ; sinon WebSocket ws://localhost:8765 (maquette locale). */
 (function () {
   "use strict";
   if (window.top !== window) return;
   if (window.__colette) return;
-  window.__colette = { version: 3 };
+  window.__colette = { version: 1 };
 
   var WS_URL = "ws://localhost:8765";
-  var PANEL_W = 440;  // largeur du panneau ; la page est rétrécie d'autant (rien n'est caché)
-  var state = { open: false, status: "idle", steps: [], subtitle: "", confirm: null };
+  var PANEL_W = 360; // largeur du panneau latéral ; la page est rétrécie d'autant (rien n'est caché)
+  var HOLD_MS = 800;  // appui maintenu exigé sur Pause/Stop pendant que l'agent H agit
+  var hold = null;    // {action, t0} — hors du DOM : render() reconstruit tout à chaque état
+  var state = { open: false, status: "idle", steps: [], subtitle: "", confirm: null, guide: null };
+  var PAGE_ID = Math.random().toString(36).slice(2, 10); // distingue les pages pour le guide manuel
+  var nextCid = 1;
   var connected = false;
   var ws = null;
-  var host, root, lastKey = "";
-
-  var BLUE = "#2155D3", INK = "#0F172A", MUTED = "#475569", LINE = "#E2E6EE";
-  var GREEN = "#2E6B4A", AMBER = "#8A5A12", SOFT = "#F3F5F9";
+  var host, root;
 
   var CSS = [
     ":host{all:initial}",
-    "*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;margin:0}",
-    "button{font:inherit;cursor:pointer}",
-    ".wrap{position:fixed;inset:0;z-index:2147483647;pointer-events:none}",
-    ".wrap *{pointer-events:auto}",
-    /* ---- pastille fermée ---- */
-    ".pill{position:fixed;right:28px;bottom:28px;display:flex;align-items:center;gap:14px;background:" + BLUE + ";color:#fff;",
-    "border:none;border-radius:999px;padding:10px 30px 10px 10px;box-shadow:0 10px 28px rgba(33,85,211,.35);text-align:left}",
-    ".pill:hover{background:#1A47B8}",
-    ".pill .av{width:58px;height:58px;border:none}",
-    ".pill b{display:block;font-size:21px;font-weight:700;line-height:1.2}",
-    ".pill small{display:block;font-size:15px;opacity:.95;margin-top:2px}",
-    ".pill.live .av{animation:halo 1.6s ease-in-out infinite}",
-    "@keyframes halo{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.7)}50%{box-shadow:0 0 0 9px rgba(255,255,255,0)}}",
-    ".av{flex:none;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;border:1px solid " + LINE + "}",
-    ".av svg{width:80%;height:80%}",
-    /* ---- écran 05 : cadre dégradé autour de la page + « Je clique ici » ---- */
-    ".frame{position:fixed;left:0;top:0;bottom:0;right:" + PANEL_W + "px;border:5px solid transparent;",
-    "border-image:linear-gradient(90deg,#4F6BFF,#B66CE0 50%,#4F6BFF) 1;pointer-events:none!important}",
-    ".mark{position:fixed;border:3px solid " + BLUE + ";border-radius:12px;pointer-events:none!important}",
-    ".mark span{position:absolute;left:18px;top:calc(100% + 6px);background:" + BLUE + ";color:#fff;font-size:15px;font-weight:700;",
-    "padding:6px 14px;border-radius:8px;white-space:nowrap;pointer-events:none!important}",
-    /* ---- panneau latéral ---- */
-    ".side{position:fixed;top:0;right:0;bottom:0;width:" + PANEL_W + "px;background:#fff;color:" + INK + ";",
-    "border-left:1px solid " + LINE + ";display:flex;flex-direction:column;overflow:hidden}",
-    ".top{display:flex;align-items:center;justify-content:space-between;height:42px;padding:0 14px 0 16px;background:#F6F7FA;",
-    "border-bottom:1px solid " + LINE + ";font-size:15px;font-weight:700;flex:none}",
-    ".top button{background:none;border:none;color:" + MUTED + ";padding:4px;display:flex}.top svg{width:18px;height:18px}",
-    ".head{display:flex;align-items:center;gap:16px;padding:18px 20px;border-bottom:1px solid " + LINE + ";flex:none}",
-    ".head .av{width:62px;height:62px}",
-    ".who{flex:1;min-width:0}",
-    ".who b{display:block;font-size:25px;font-weight:800}",
-    ".st{display:flex;align-items:center;gap:8px;font-size:17px;font-weight:700;margin-top:2px}",
-    ".st i{width:11px;height:11px;border-radius:50%;background:currentColor;flex:none}",
-    ".st.green{color:" + GREEN + "}.st.blue{color:" + BLUE + "}.st.amber{color:" + AMBER + "}",
-    ".x{background:#fff;border:1.5px solid #D3D8E2;border-radius:14px;padding:9px 13px 7px;display:flex;flex-direction:column;",
-    "align-items:center;gap:3px;color:" + INK + ";font-size:14px;font-weight:700}",
-    ".x svg{width:22px;height:22px}",
-    ".callbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px 20px;font-size:15px;font-weight:700;",
-    "background:#E9F4EE;color:" + GREEN + ";flex:none}",
-    ".callbar span{display:flex;align-items:center;gap:7px}.callbar i{width:9px;height:9px;border-radius:50%;background:currentColor}",
-    ".callbar svg{width:15px;height:15px}",
-    ".callbar.paused{background:#FBF3E4;color:" + AMBER + "}.callbar.ended{background:" + SOFT + ";color:" + MUTED + "}",
-    ".body{flex:1;overflow-y:auto;padding:24px 22px;display:flex;flex-direction:column}",
-    ".body>*{flex-shrink:0}",
-    ".foot{border-top:1px solid " + LINE + ";padding:18px 22px 22px;display:flex;flex-direction:column;gap:12px;flex:none}",
-    "h2{font-size:27px;line-height:1.25;font-weight:800;color:" + INK + "}",
-    "h3{font-size:19px;font-weight:800;color:" + INK + "}",
-    "p{font-size:18px;line-height:1.45;color:" + MUTED + "}",
-    ".btn{width:100%;border-radius:16px;font-size:20px;font-weight:800;padding:18px 12px;border:2px solid " + BLUE + ";",
-    "background:" + BLUE + ";color:#fff;display:flex;align-items:center;justify-content:center;gap:10px;white-space:nowrap}",
-    ".btn:hover{background:#1A47B8}",
-    ".btn.sec{background:#fff;color:" + INK + ";border-color:#D3D8E2}.btn.sec:hover{background:#F6F7FA}",
-    ".btn.dark{background:#fff;color:" + INK + ";border-color:" + INK + "}.btn.dark:hover{background:#F6F7FA}",
-    ".row2{display:flex;gap:12px}.row2 .btn{flex:1}",
-    ".rows{display:flex;flex-direction:column;gap:12px;margin-top:14px}",
-    ".rowb{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fff;",
-    "border:1.5px solid #D9DEE7;border-radius:14px;padding:18px 20px;font-size:19px;font-weight:800;color:" + INK + ";text-align:left}",
-    ".rowb:hover{border-color:" + BLUE + ";background:#F7F9FE}",
-    ".rowb svg{width:22px;height:22px;color:" + BLUE + ";flex:none}",
-    /* 02 · ouverte */
-    ".lead{margin-top:12px}",
-    ".talk{display:flex;flex-direction:column;align-items:center;margin-top:26px;background:none;border:none;width:100%}",
-    ".talk .halo{width:184px;height:184px;border-radius:50%;background:#EAF0FC;display:flex;align-items:center;justify-content:center}",
-    ".talk .disc{width:146px;height:146px;border-radius:50%;background:" + BLUE + ";color:#fff;display:flex;align-items:center;justify-content:center}",
-    ".talk:hover .disc{background:#1A47B8}",
-    ".talk svg{width:50px;height:50px}",
-    ".talk b{font-size:26px;font-weight:800;color:" + INK + ";margin-top:18px}",
-    ".lock{display:flex;align-items:center;justify-content:center;gap:8px;font-size:16px;color:" + MUTED + ";margin-top:14px}",
-    ".lock svg{width:17px;height:17px;color:" + GREEN + "}",
-    ".sep{border-top:1px solid " + LINE + ";margin:22px 0 18px}",
-    ".or{font-size:17px;color:" + MUTED + "}",
-    ".grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}",
-    ".chip{background:#fff;border:1.5px solid #D9DEE7;border-radius:14px;padding:15px 8px;font-size:18px;font-weight:800;color:" + INK + "}",
-    ".chip:hover{border-color:" + BLUE + ";background:#F7F9FE}",
-    /* 03/04 · conversation en continu */
-    /* la bulle la plus récente reste toujours visible en bas ; les anciennes s'effacent par le haut */
-    ".chat{display:flex;flex-direction:column;justify-content:flex-end;gap:6px;overflow:hidden;flex:1 1 auto!important;min-height:0;",
-    "-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 40px)}",
-    ".who2{font-size:14px;font-weight:700;color:" + MUTED + ";margin-top:12px}",
-    ".who2.me{text-align:right}",
-    ".msg{max-width:86%;border-radius:16px;padding:14px 18px;font-size:17px;line-height:1.45;color:" + INK + ";background:" + SOFT + ";align-self:flex-start}",
-    ".msg.me{background:#EEF3FD;align-self:flex-end}",
-    ".msg.now{font-size:23px;font-weight:800;line-height:1.35;max-width:100%}",
-    ".caret{display:inline-block;width:2px;height:1.1em;background:" + BLUE + ";margin-left:6px;vertical-align:-3px;animation:blink 1s steps(1) infinite}",
-    "@keyframes blink{50%{opacity:0}}",
-    ".hintbox{display:flex;gap:12px;align-items:flex-start;border:2px solid " + BLUE + ";border-radius:14px;padding:16px 18px;",
-    "font-size:18px;font-weight:800;color:" + INK + ";margin-top:16px}",
-    ".hintbox svg{width:22px;height:22px;color:" + BLUE + ";flex:none;margin-top:2px}",
-    ".listen{padding-top:16px;text-align:center;color:" + GREEN + ";font-size:18px;font-weight:800}",
-    ".listen.blue{color:" + BLUE + "}.listen.grey{color:" + MUTED + "}",
-    ".wave{display:flex;justify-content:center;align-items:center;gap:6px;height:52px;margin-bottom:10px}",
-    ".wave i{width:6px;height:14px;border-radius:3px;background:currentColor;animation:wv 1s ease-in-out infinite}",
-    ".wave.still i{animation:none;height:6px;opacity:.5}",
-    "@keyframes wv{0%,100%{transform:scaleY(.5)}50%{transform:scaleY(2.6)}}",
-    /* 05 · navigue */
-    ".count{font-size:17px;font-weight:800;color:" + BLUE + ";margin-top:20px}",
-    ".segs{display:flex;gap:6px;margin-top:12px}.segs i{flex:1;height:9px;border-radius:5px;background:#E5E8EF}.segs i.on{background:" + BLUE + "}",
-    ".steps{list-style:none;padding:0;margin:20px 0 0;display:flex;flex-direction:column;gap:18px}",
-    ".steps li{display:flex;align-items:center;gap:14px}",
-    ".dot{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;border:2px solid #D3D8E2;background:#fff}",
-    ".dot svg{width:18px;height:18px}",
-    ".done .dot{background:" + GREEN + ";border-color:" + GREEN + ";color:#fff}",
-    ".doing .dot{background:" + BLUE + ";border-color:" + BLUE + "}.doing .dot:after{content:'';width:10px;height:10px;border-radius:50%;background:#fff}",
-    ".steps .lbl{flex:1;font-size:18px;line-height:1.3;color:" + MUTED + "}",
-    ".done .lbl{color:" + INK + "}.doing .lbl{color:" + BLUE + ";font-weight:800}",
-    ".steps small{font-size:14px;font-weight:700;color:" + MUTED + ";white-space:nowrap}",
-    ".done small{color:" + GREEN + "}.doing small{color:" + BLUE + "}",
-    ".says{background:#EEF3FD;border-radius:14px;padding:16px 18px;margin-top:22px;font-size:17px;line-height:1.45;color:" + INK + ";",
-    "display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}",
-    ".says b{font-weight:800}",
-    /* Pendant que H agit : le panneau laisse passer les clics (H ne peut ni le cliquer ni le fermer) ;
-       seuls Pause / Arrêter restent actifs (simple clic). */
-    ".guard .side,.guard .side *{pointer-events:none}",
-    ".guard .side .hold{pointer-events:auto}",
-    /* 06 · votre accord */
-    ".tag{align-self:flex-start;background:#7A4A10;color:#fff;border-radius:8px;padding:6px 12px;font-size:16px;font-weight:800;margin-bottom:18px}",
-    ".pts{list-style:none;padding:0;margin:18px 0 0;display:flex;flex-direction:column;gap:12px}",
-    ".pts li{display:flex;gap:12px;font-size:18px;line-height:1.4;color:" + INK + "}",
-    ".pts svg{width:20px;height:20px;flex:none;margin-top:3px;color:" + GREEN + "}",
-    ".ambre{display:flex;gap:12px;background:#FBF3E4;color:" + AMBER + ";border-radius:14px;padding:16px 18px;",
-    "font-size:18px;font-weight:800;line-height:1.4;margin-top:20px}",
-    ".ambre svg{width:22px;height:22px;flex:none;margin-top:2px}",
-    /* 07 · c'est fait / 10 · échec */
-    ".badge{width:92px;height:92px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:22px}",
-    ".badge svg{width:42px;height:42px}",
-    ".badge.ok{background:" + GREEN + ";color:#fff}.badge.warn{background:#FBF3E4;color:" + AMBER + ";width:64px;height:64px}",
-    ".badge.warn svg{width:30px;height:30px}.badge.info{background:#E8EEFB;color:" + BLUE + "}",
-    ".big1{font-size:38px}",
-    ".box{background:" + SOFT + ";border-radius:14px;padding:18px 20px;margin-top:22px}",
-    ".box ol{margin:10px 0 0;padding-left:22px}",
-    ".box li{font-size:17px;line-height:1.4;color:" + INK + ";margin-top:6px}",
-    ".okpill{display:flex;align-items:center;gap:12px;background:#E9F4EE;color:" + GREEN + ";border-radius:14px;padding:16px 18px;",
-    "font-size:18px;font-weight:800;margin-top:20px}",
-    ".okpill svg{width:22px;height:22px;flex:none}",
-    ".q{font-size:18px;font-weight:800;color:" + INK + ";margin-top:22px}",
-    ".off{font-size:15px;color:#B42318;margin-top:14px;text-align:center}",
-    /* petits écrans (portable 13") : tout tient sans défiler */
-    "@media (max-height:820px){.head{padding:12px 20px}.head .av{width:52px;height:52px}.body{padding:18px 22px}",
-    ".talk{margin-top:16px}.talk .halo{width:150px;height:150px}.talk .disc{width:118px;height:118px}.talk b{margin-top:12px;font-size:23px}",
-    ".sep{margin:16px 0 12px}.grid{margin-top:12px}.chip{padding:13px 8px}.steps{gap:12px;margin-top:14px}.count{margin-top:14px}",
-    ".badge.ok{width:76px;height:76px;margin-bottom:16px}.big1{font-size:32px}.foot{padding:14px 22px 16px}.btn{padding:15px 12px}}"
+    "*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif}",
+    ".wrap{position:fixed;right:24px;bottom:24px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-end;gap:12px}",
+    ".bubble{display:flex;align-items:center;gap:12px;background:#6b2fd6;color:#fff;border:none;border-radius:999px;",
+    "padding:14px 22px 14px 14px;font-size:20px;font-weight:600;cursor:pointer;box-shadow:0 8px 24px rgba(60,20,120,.35)}",
+    ".bubble:hover{background:#5a22bf}",
+    ".dot{width:44px;height:44px;border-radius:50%;background:#fff;color:#6b2fd6;display:flex;align-items:center;justify-content:center;font-size:26px}",
+    ".working .dot,.speaking .dot,.listening .dot{animation:pulse 1.4s ease-in-out infinite}",
+    "@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.7)}50%{box-shadow:0 0 0 10px rgba(255,255,255,0)}}",
+    ".panel{width:380px;max-height:78vh;overflow:auto;background:#fff;color:#1d1530;border-radius:20px;",
+    "box-shadow:0 16px 48px rgba(40,10,90,.35);border:3px solid #6b2fd6;padding:18px 20px}",
+    ".head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}",
+    ".title{font-size:22px;font-weight:700;color:#6b2fd6}",
+    ".status{font-size:15px;color:#5b5370;margin-top:2px}",
+    ".x{background:none;border:none;font-size:28px;line-height:1;cursor:pointer;color:#5b5370;padding:4px 8px}",
+    ".sub{font-size:24px;line-height:1.35;font-weight:600;min-height:32px;margin:6px 0 14px}",
+    ".steps{list-style:none;margin:0 0 14px;padding:0}",
+    ".steps li{display:flex;gap:10px;align-items:flex-start;font-size:18px;padding:6px 0;color:#8a8399}",
+    ".steps li.doing{color:#1d1530;font-weight:700}.steps li.done{color:#2e7d32}",
+    ".ico{width:24px;flex:none;text-align:center}",
+    ".card{background:#fff6d6;border:3px solid #e0a800;border-radius:16px;padding:14px;margin-bottom:14px}",
+    ".card p{font-size:21px;font-weight:700;margin:0 0 12px}",
+    ".yn{display:flex;gap:12px}",
+    ".yn button{flex:1;font-size:24px;font-weight:800;padding:14px 0;border-radius:14px;border:none;cursor:pointer;color:#fff}",
+    ".yes{background:#2e7d32}.no{background:#c62828}",
+    ".ctrl{display:flex;gap:10px}",
+    ".ctrl button{flex:1;font-size:18px;font-weight:700;padding:12px 0;border-radius:12px;cursor:pointer;border:2px solid #6b2fd6;background:#fff;color:#6b2fd6}",
+    ".ctrl .stop{border-color:#c62828;color:#c62828}",
+    ".off{font-size:14px;color:#c62828;margin-top:10px}",
+    ".hidden{display:none!important}",
+    /* Panneau compact pendant que l'agent agit : ne masque pas les champs de la page. */
+    ".panel.compact{width:300px;padding:12px 14px;border-radius:16px}",
+    ".compact .head{margin-bottom:4px}.compact .title{font-size:17px}.compact .status{font-size:13px}",
+    ".compact .x{font-size:22px;padding:2px 6px}",
+    ".compact .sub{font-size:17px;line-height:1.3;min-height:0;margin:2px 0 8px}",
+    ".compact .steps{margin:0 0 8px}.compact .steps li{font-size:14px;padding:2px 0;gap:6px}",
+    ".compact .ico{width:18px}",
+    ".compact .ctrl button{font-size:14px;padding:7px 0;border-radius:10px}",
+    /* Pendant que H agit : le panneau laisse passer les clics vers la page (H ne peut ni le
+       cliquer ni le fermer) ; seuls Pause/Stop restent actifs, en appui maintenu (H fait des clics brefs). */
+    ".wrap{pointer-events:none}.wrap>*{pointer-events:auto}",
+    ".panel.compact{pointer-events:none;opacity:.92}",
+    ".compact .ctrl button{pointer-events:auto;position:relative;overflow:hidden}",
+    ".compact .ctrl button .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(107,47,214,.25)}",
+    ".compact .ctrl .stop .fill{background:rgba(198,40,40,.25)}",
+    ".compact .ctrl button.holding .fill{width:100%;transition:width " + HOLD_MS + "ms linear}",
+    ".hint{font-size:12px;color:#5b5370;text-align:center;margin-top:4px}",
+    /* Ouverte : panneau latéral pleine hauteur à droite ; la page est poussée à gauche (setPush). */
+    ".wrap.side{top:0;right:0;bottom:0;width:" + PANEL_W + "px;gap:0;align-items:stretch}",
+    ".side .panel,.side .panel.compact{width:100%;height:100%;max-height:none;border-radius:0;border:none;",
+    "border-left:4px solid #6b2fd6;box-shadow:-6px 0 24px rgba(40,10,90,.18);padding:22px 20px;display:flex;flex-direction:column}",
+    ".side .sub{font-size:24px}.side .compact .sub{font-size:22px;margin:6px 0 14px}",
+    ".side .compact .title{font-size:22px}.side .compact .status{font-size:15px}.side .compact .head{margin-bottom:10px}",
+    ".side .steps{flex:1;overflow:auto}.side .compact .steps li{font-size:16px;padding:4px 0}",
+    ".side .ctrl{margin-top:auto}.side .compact .ctrl button{font-size:17px;padding:12px 0}",
+    /* Guide manuel : anneau autour de l'élément à cliquer + petite fenêtre de consigne. */
+    ".glayer{position:fixed;inset:0;z-index:2147483646;pointer-events:none}",
+    ".ring{position:fixed;border:4px solid #6b2fd6;border-radius:12px;pointer-events:none;",
+    "box-shadow:0 0 0 9999px rgba(20,10,40,.28);animation:ring 1.2s ease-in-out infinite}",
+    ".ring.warn{border-color:#e65100}",
+    "@keyframes ring{0%,100%{outline:0 solid rgba(107,47,214,.5)}50%{outline:8px solid rgba(107,47,214,0)}}",
+    ".tip{position:fixed;width:320px;background:#fff;color:#1d1530;border:3px solid #6b2fd6;border-radius:16px;",
+    "padding:12px 14px;box-shadow:0 12px 32px rgba(40,10,90,.35);pointer-events:auto}",
+    ".tip.warn{border-color:#e65100;background:#fff3e0}",
+    ".tip .n{font-size:14px;font-weight:700;color:#6b2fd6;margin-bottom:4px}.tip.warn .n{color:#e65100}",
+    ".tip .t{font-size:19px;line-height:1.35;font-weight:600;margin-bottom:10px}",
+    ".tip button{font-size:16px;font-weight:700;padding:8px 14px;border-radius:10px;border:2px solid #6b2fd6;",
+    "background:#6b2fd6;color:#fff;cursor:pointer}"
   ].join("");
 
-  // ---- icônes (SVG en ligne) ----
-  var ICON = {
-    avatar: '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="9" r="5" fill="' + BLUE + '"/>' +
-      '<path d="M10 24c0-8.5 6-14 14-14s14 5.5 14 14c-3.2-4.6-8-6.6-14-6.6S13.2 19.4 10 24z" fill="' + BLUE + '"/>' +
-      '<circle cx="17.5" cy="26" r="5.4" fill="none" stroke="#111827" stroke-width="2.6"/>' +
-      '<circle cx="30.5" cy="26" r="5.4" fill="none" stroke="#111827" stroke-width="2.6"/>' +
-      '<path d="M22.9 25.5h2.2" stroke="#111827" stroke-width="2.6"/>' +
-      '<path d="M19 35q5 4 10 0" fill="none" stroke="#111827" stroke-width="2.6" stroke-linecap="round"/></svg>',
-    x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
-    mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21"/></svg>',
-    chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
-    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
-    tick: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
-    warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5L2.5 20h19L12 3.5z"/><path d="M12 10v4.5M12 17.3v.2"/></svg>',
-    lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>',
-    shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
-    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.2"/></svg>'
+  var STATUS_TEXT = {
+    idle: "Prête à vous aider", listening: "Je vous écoute…", speaking: "Colette parle…",
+    working: "Je m'occupe de tout…", paused: "En pause — vous avez la main",
+    awaiting_confirm: "J'attends votre accord", guiding: "Je vous guide pas à pas", done: "C'est terminé"
   };
 
   function hasBinding() { return typeof window.__coletteSend === "function"; }
@@ -202,52 +110,13 @@
     return e;
   }
 
-  function svg(name) {
-    var s = el("span");
-    s.style.display = "contents";
-    s.innerHTML = ICON[name];
-    return s;
-  }
-
-  function avatar() { var a = el("div", "av"); a.innerHTML = ICON.avatar; return a; }
-
-  function button(cls, text, onclick) {
-    var b = el("button", "btn " + (cls || ""), text);
-    if (onclick) b.onclick = onclick;
-    return b;
-  }
-
-  function rowButton(text, onclick) {
-    var b = el("button", "rowb");
-    b.appendChild(el("span", null, text));
-    b.appendChild(svg("chev"));
-    b.onclick = onclick;
-    return b;
-  }
-
-  function wave(still) {
-    var w = el("div", "wave" + (still ? " still" : ""));
-    for (var i = 0; i < 11; i++) {
-      var bar = el("i");
-      bar.style.animationDelay = (-((Date.now() + i * 137) % 1000)) + "ms";  // même phase après chaque rendu
-      bar.style.animationDuration = (0.8 + (i % 3) * 0.2) + "s";
-      w.appendChild(bar);
-    }
-    return w;
-  }
-
-  function lastColette() {
-    var t = state.transcript || [];
-    for (var i = t.length - 1; i >= 0; i--) if (t[i].who !== "vous") return t[i].text;
-    return "";
-  }
-
   function build() {
     host = document.createElement("colette-widget");
     host.setAttribute("aria-label", "Colette (assistant) — à ignorer");
     host.setAttribute("data-colette", "1");
     root = host.attachShadow({ mode: "open" });
     var style = el("style"); style.textContent = CSS; root.appendChild(style);
+    var glayer = el("div", "glayer hidden"); glayer.id = "glayer"; root.appendChild(glayer);
     var wrap = el("div", "wrap"); wrap.id = "wrap"; root.appendChild(wrap);
     mount();
     render();
@@ -257,286 +126,241 @@
     if (host && !host.isConnected) (document.body || document.documentElement).appendChild(host);
   }
 
-  // ---- quel écran ? ----
-  function screen() {
-    if (!state.open) return "closed";
-    var o = state.outcome;
-    if (state.confirm) return "confirm";
-    if (o && o.kind === "failed") return "failed";
-    if (o) return "done";
-    if (state.busy) return "working";
-    if (state.call) return "call";
-    return "home";
-  }
-
-  function statusFor(scr) {
-    if (state.status === "paused" && (scr === "call" || scr === "working")) return ["amber", "En pause"];
-    if (scr === "call") return state.status === "speaking" ? ["blue", "Colette vous parle…"] : ["blue", "Je vous écoute…"];
-    if (scr === "working") return state.status === "listening" ? ["blue", "Je vous écoute…"] : ["blue", "Je navigue pour vous"];
-    if (scr === "confirm") return ["amber", "Attend votre accord"];
-    if (scr === "failed") return ["amber", "Colette a besoin d'aide"];
-    if (scr === "done") return state.outcome && state.outcome.kind !== "success" ? ["blue", "Démarche arrêtée"] : ["green", "Terminé"];
-    return ["green", "Disponible"];
-  }
-
   function render() {
     if (!root) return;
-    var scr = screen();
-    var shown = {}; for (var f in state) if (f !== "subtitle") shown[f] = state[f];  // sous-titres mot à mot : non affichés
-    var key = JSON.stringify([shown, connected]);
-    if (key === lastKey) return;  // rien n'a changé : pas de reconstruction
-    lastKey = key;
     var wrap = root.getElementById("wrap");
-    wrap.className = "wrap" + (scr === "working" ? " guard" : "");
+    wrap.className = "wrap " + state.status + (state.open ? " side" : "");
     wrap.textContent = "";
     setPush(state.open);
-    updateMark();
 
-    if (scr === "closed") {
-      var pill = el("button", "pill" + (state.call || state.busy ? " live" : ""));
-      pill.setAttribute("aria-label", "Parler à Colette");
-      pill.appendChild(avatar());
-      var t = el("span");
-      t.appendChild(el("b", null, "Parler à Colette"));
-      t.appendChild(el("small", null, state.busy ? "Je travaille pour vous" : "Votre assistante"));
-      pill.appendChild(t);
-      pill.onclick = function () { state.open = true; render(); send({ type: "open" }); };
-      wrap.appendChild(pill);
+    if (state.open) {
+      var compact = state.status === "working" && !state.confirm;
+      var panel = el("div", compact ? "panel compact" : "panel");
+      panel.setAttribute("role", "dialog");
+      var head = el("div", "head");
+      var t = el("div");
+      t.appendChild(el("div", "title", "🟣 Colette"));
+      t.appendChild(el("div", "status", STATUS_TEXT[state.status] || state.status));
+      head.appendChild(t);
+      if (!compact) {  // pas de fermeture pendant que H agit (il l'a déjà fait)
+        var x = el("button", "x", "×");
+        x.setAttribute("aria-label", "Réduire");
+        x.onclick = function () { state.open = false; render(); send({ type: "close" }); };
+        head.appendChild(x);
+      }
+      panel.appendChild(head);
+
+      panel.appendChild(el("div", "sub", state.subtitle || "Bonjour, que puis-je faire pour vous ?"));
+
+      if (state.confirm) {
+        var card = el("div", "card");
+        card.appendChild(el("p", null, state.confirm.text));
+        var yn = el("div", "yn");
+        var yes = el("button", "yes", "OUI"); yes.onclick = function () { send({ type: "confirm", value: true }); };
+        var no = el("button", "no", "NON"); no.onclick = function () { send({ type: "confirm", value: false }); };
+        yn.appendChild(yes); yn.appendChild(no); card.appendChild(yn);
+        panel.appendChild(card);
+      }
+
+      if (state.steps && state.steps.length) {
+        var ul = el("ul", "steps");
+        var steps = state.steps.slice(-8);
+        steps.forEach(function (s) {
+          var li = el("li", s.state);
+          li.appendChild(el("span", "ico", s.state === "done" ? "✅" : s.state === "doing" ? "👉" : "○"));
+          li.appendChild(el("span", null, s.label));
+          ul.appendChild(li);
+        });
+        panel.appendChild(ul);
+      }
+
+      var ctrl = el("div", "ctrl");
+      var paused = state.status === "paused";
+      if (state.status === "guiding") {  // guide manuel : la personne clique elle-même, seul Stop reste
+        var gstop = el("button", "stop", "⏹ Arrêter le guide");
+        gstop.onclick = function () { send({ type: "stop" }); };
+        ctrl.appendChild(gstop);
+        panel.appendChild(ctrl);
+        if (!connected) panel.appendChild(el("div", "off", "Connexion à Colette perdue… je réessaie."));
+        wrap.appendChild(panel);
+        renderGuide();
+        return;
+      }
+      var pause = el("button", "pause", paused ? "▶️ Reprendre" : "✋ Pause");
+      var stop = el("button", "stop", "⏹ Stop");
+      if (compact) {
+        holdable(pause, "pause");
+        holdable(stop, "stop");
+      } else {
+        pause.onclick = function () { send({ type: paused ? "resume" : "pause" }); };
+        stop.onclick = function () { send({ type: "stop" }); };
+      }
+      ctrl.appendChild(pause); ctrl.appendChild(stop);
+      panel.appendChild(ctrl);
+      if (compact) panel.appendChild(el("div", "hint", "Maintenez le bouton appuyé"));
+
+      if (!connected) panel.appendChild(el("div", "off", "Connexion à Colette perdue… je réessaie."));
+      wrap.appendChild(panel);
+    } else {
+      var b = el("button", "bubble");
+      b.setAttribute("aria-label", "Parler à Colette");
+      b.appendChild(el("span", "dot", "🟣"));
+      b.appendChild(el("span", null, state.status === "idle" ? "Besoin d'aide ? Parlez à Colette" : "Colette"));
+      b.onclick = function () { state.open = true; render(); send({ type: "open" }); };
+      wrap.appendChild(b);
+    }
+    renderGuide();
+  }
+
+  // ---- Guide manuel : lecture de la page, anneau + fenêtre de consigne, détection du clic ----
+  var SCAN_SEL = "a[href],button,input:not([type=hidden]),select,textarea,summary,[onclick]," +
+    "[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=radio],[role=option],[role=switch]";
+  var BUTTON_INPUTS = /^(button|submit|reset|checkbox|radio|image|file)$/;
+
+  function visible(e) {
+    var r = e.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    var cs = getComputedStyle(e);
+    return cs.visibility !== "hidden" && cs.display !== "none" && parseFloat(cs.opacity || "1") > 0.05;
+  }
+
+  function clean(t) { return ((t || "") + "").replace(/\s+/g, " ").trim().slice(0, 90); }
+
+  // Libellé lisible — JAMAIS la valeur tapée dans un champ (mot de passe, identifiant…).
+  function labelOf(e) {
+    var tag = e.tagName, t = e.getAttribute("aria-label") || "";
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+      if (tag === "INPUT" && /^(button|submit|reset)$/.test(e.type)) t = t || e.value;
+      if (!t && e.id) {
+        var esc = window.CSS && window.CSS.escape ? window.CSS.escape(e.id) : e.id;
+        var l = document.querySelector('label[for="' + esc + '"]');
+        if (l) t = l.innerText;
+      }
+      if (!t && e.closest("label")) t = e.closest("label").innerText;
+      t = t || e.placeholder || e.name || e.title || "";
+      if (tag === "SELECT" && e.selectedIndex >= 0 && e.options[e.selectedIndex]) {
+        t += " (choix : " + e.options[e.selectedIndex].text + ")";
+      }
+      return clean(t);
+    }
+    t = t || e.innerText || e.title || "";
+    if (!clean(t)) { var img = e.querySelector("img[alt]"); if (img) t = img.alt; }
+    return clean(t);
+  }
+
+  window.__colette.scan = function () {
+    var nodes = document.querySelectorAll(SCAN_SEL), out = [];
+    for (var i = 0; i < nodes.length && out.length < 200; i++) {
+      var e = nodes[i];
+      if (!visible(e) || e.closest("[aria-hidden=true]") || e.disabled) continue;
+      var text = labelOf(e);
+      var field = /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName);
+      if (!text && !field) continue;
+      var cid = e.getAttribute("data-colette-id");
+      if (!cid) { cid = "c" + (nextCid++); e.setAttribute("data-colette-id", cid); }
+      var r = e.getBoundingClientRect();
+      out.push({ id: cid, tag: e.tagName.toLowerCase(), type: e.getAttribute("role") || (field ? e.type || "" : ""),
+                 text: text, inView: r.bottom > 0 && r.top < window.innerHeight });
+    }
+    var heads = [], hs = document.querySelectorAll("h1,h2,h3");
+    for (var j = 0; j < hs.length && heads.length < 10; j++) {
+      if (visible(hs[j]) && clean(hs[j].innerText)) heads.push(clean(hs[j].innerText));
+    }
+    return { pageId: PAGE_ID, url: location.href, title: document.title, headings: heads,
+             text: ((document.body && document.body.innerText) || "").replace(/\s+/g, " ").slice(0, 2500),
+             elements: out };
+  };
+
+  var guideRaf = null, shownStep = null;
+
+  function guideHere() { var g = state.guide; return g && g.page === PAGE_ID ? g : null; }
+
+  function guideTarget() {
+    var g = guideHere();
+    return g && g.target ? document.querySelector('[data-colette-id="' + g.target + '"]') : null;
+  }
+
+  function isTextField(e) {
+    return !!e && ((e.tagName === "INPUT" && !BUTTON_INPUTS.test(e.type)) || e.tagName === "TEXTAREA" ||
+                   e.tagName === "SELECT" || e.isContentEditable);
+  }
+
+  function renderGuide() {
+    if (!root) return;
+    var layer = root.getElementById("glayer"), g = guideHere();
+    if (!g) {
+      layer.className = "glayer hidden"; layer.textContent = "";
+      if (guideRaf) { cancelAnimationFrame(guideRaf); guideRaf = null; }
+      shownStep = null; layer.removeAttribute("data-key");
       return;
     }
-
-    if (scr === "working") wrap.appendChild(el("div", "frame"));
-    if (markBox) wrap.appendChild(markBox);
-
-    var side = el("div", "side");
-    side.setAttribute("role", "dialog");
-    side.setAttribute("aria-label", "Colette");
-    wrap.appendChild(side);
-    var closeFn = function () { state.open = false; render(); send({ type: "close" }); };
-
-    var top = el("div", "top");
-    top.appendChild(el("span", null, "Colette"));
-    if (scr !== "working") { var tx = el("button"); tx.setAttribute("aria-label", "Fermer"); tx.appendChild(svg("x")); tx.onclick = closeFn; top.appendChild(tx); }
-    side.appendChild(top);
-
-    var head = el("div", "head");
-    head.appendChild(avatar());
-    var who = el("div", "who");
-    who.appendChild(el("b", null, "Colette"));
-    var st = statusFor(scr);
-    var stl = el("div", "st " + st[0]);
-    stl.appendChild(el("i"));
-    stl.appendChild(el("span", null, st[1]));
-    who.appendChild(stl);
-    head.appendChild(who);
-    if (scr !== "working") {  // pas de fermeture pendant que H agit
-      var x = el("button", "x");
-      x.setAttribute("aria-label", "Fermer");
-      x.appendChild(svg("x"));
-      x.appendChild(el("span", null, "Fermer"));
-      x.onclick = closeFn;
-      head.appendChild(x);
+    // L'état change souvent (sous-titres mot à mot) : on ne reconstruit que si l'étape change.
+    var key = g.step + "|" + g.target + "|" + g.text;
+    if (layer.getAttribute("data-key") === key) { if (!guideRaf) guideRaf = requestAnimationFrame(placeGuide); return; }
+    layer.setAttribute("data-key", key);
+    layer.className = "glayer"; layer.textContent = "";
+    var warn = g.irreversible ? " warn" : "";
+    var ring = el("div", "ring" + warn); ring.id = "gring"; layer.appendChild(ring);
+    var tip = el("div", "tip" + warn); tip.id = "gtip";
+    tip.appendChild(el("div", "n", (g.irreversible ? "⚠️ Étape " : "Étape ") + g.step));
+    tip.appendChild(el("div", "t", g.text));
+    var next = el("button", null, "C'est fait ➜");
+    next.onclick = function () { send({ type: "guide_next", step: g.step }); };
+    tip.appendChild(next);
+    layer.appendChild(tip);
+    var t = guideTarget();
+    if (t && shownStep !== g.step) {
+      shownStep = g.step;
+      try { t.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { t.scrollIntoView(); }
     }
-    side.appendChild(head);
+    if (!guideRaf) guideRaf = requestAnimationFrame(placeGuide);
+  }
 
-    // Barre d'appel : dit toujours la vérité sur le micro.
-    if (scr !== "home") {
-      var live = state.call || state.busy, paused = state.status === "paused";
-      var cb = el("div", "callbar" + (!live ? " ended" : paused ? " paused" : ""));
-      var l = el("span"); l.appendChild(el("i"));
-      l.appendChild(document.createTextNode(!live ? "Appel terminé · micro coupé" : paused ? "En pause · micro coupé" : "Appel en cours · micro allumé"));
-      var r = el("span"); r.appendChild(svg("lock")); r.appendChild(document.createTextNode("Je ne garde rien"));
-      cb.appendChild(l); cb.appendChild(r);
-      side.appendChild(cb);
+  // Suit l'élément à chaque image (défilement, animations, page qui se décale).
+  function placeGuide() {
+    guideRaf = null;
+    if (!root || !guideHere()) return;
+    var ring = root.getElementById("gring"), tip = root.getElementById("gtip");
+    if (!ring || !tip) return;
+    var t = guideTarget();
+    var areaW = window.innerWidth - (pushed ? PANEL_W : 0), tw = 320, th = tip.offsetHeight || 140;
+    if (t && t.isConnected) {
+      var r = t.getBoundingClientRect(), pad = 6;
+      ring.style.display = "";
+      ring.style.left = (r.left - pad) + "px"; ring.style.top = (r.top - pad) + "px";
+      ring.style.width = (r.width + 2 * pad) + "px"; ring.style.height = (r.height + 2 * pad) + "px";
+      var top = r.bottom + 16;
+      if (top + th > window.innerHeight - 8) top = Math.max(8, r.top - th - 16);
+      var left = Math.min(Math.max(8, r.left), Math.max(8, areaW - tw - 12));
+      tip.style.left = left + "px"; tip.style.top = top + "px";
+    } else {  // pas d'élément précis : consigne seule, en haut de la page
+      ring.style.display = "none";
+      tip.style.left = Math.max(8, (areaW - tw) / 2) + "px"; tip.style.top = "24px";
     }
-
-    var body = el("div", "body");
-    var foot = el("div", "foot");
-    side.appendChild(body);
-    ({ home: home, call: call, working: working, confirm: confirm, done: done, failed: failed })[scr](body, foot);
-    if (!connected) body.appendChild(el("div", "off", "Connexion à Colette perdue… je réessaie."));
-    if (foot.childNodes.length) side.appendChild(foot);
+    guideRaf = requestAnimationFrame(placeGuide);
   }
 
-  // ---- 02 · ouverte ----
-  function home(body) {
-    body.appendChild(el("h2", null, "Bonjour, je suis Colette."));
-    body.appendChild(el("p", "lead", "Dites-moi simplement ce que vous voulez faire."));
-    var talk = el("button", "talk");
-    var halo = el("span", "halo"), disc = el("span", "disc");
-    disc.appendChild(svg("mic")); halo.appendChild(disc); talk.appendChild(halo);
-    talk.appendChild(el("b", null, "Appuyer pour parler"));
-    talk.onclick = function () { state.call = true; render(); send({ type: "call" }); };
-    body.appendChild(talk);
-    var lock = el("div", "lock"); lock.appendChild(svg("lock"));
-    lock.appendChild(el("span", null, "Je ne garde rien de ce que vous dites."));
-    body.appendChild(lock);
-    var shortcuts = state.shortcuts || [];
-    if (shortcuts.length) {
-      body.appendChild(el("div", "sep"));
-      body.appendChild(el("div", "or", "Ou choisissez directement :"));
-      var grid = el("div", "grid");
-      shortcuts.forEach(function (s) {
-        var c = el("button", "chip", s.label);
-        c.onclick = function () { state.call = true; render(); send({ type: "shortcut", id: s.id }); };
-        grid.appendChild(c);
-      });
-      body.appendChild(grid);
-    }
+  // La personne a fait l'étape : clic sur l'élément, ou case remplie (change / Entrée).
+  function onGuideAction(e, kind) {
+    var g = guideHere(), t = guideTarget();
+    if (!g || !t || !e.target || !t.contains(e.target)) return;
+    var field = isTextField(t);
+    if (kind === "pointer" && field) return;  // cliquer dans une case n'est pas encore l'avoir remplie
+    if (kind === "key" && (!field || e.key !== "Enter")) return;
+    send({ type: "guide_clicked", step: g.step, how: kind });
   }
+  document.addEventListener("pointerdown", function (e) { onGuideAction(e, "pointer"); }, true);
+  document.addEventListener("change", function (e) { onGuideAction(e, "change"); }, true);
+  document.addEventListener("keydown", function (e) { onGuideAction(e, "key"); }, true);
 
-  // ---- 03 / 04 · conversation en continu ----
-  function call(body, foot) {
-    var paused = state.status === "paused", speaking = state.status === "speaking";
-    var msgs = (state.transcript || []).slice(-3).map(function (m) { return { who: m.who, text: m.text }; });
-    if (state.heard && !paused) msgs.push({ who: "vous", text: state.heard, live: true });
-    msgs = msgs.slice(-3);
-    var chat = el("div", "chat");
-    var prev = null;
-    msgs.forEach(function (m, i) {
-      var me = m.who === "vous";
-      if (m.who !== prev) chat.appendChild(el("div", "who2" + (me ? " me" : ""), me ? "Vous" : "Colette"));
-      prev = m.who;
-      var b = el("div", "msg" + (me ? " me" : "") + (i === msgs.length - 1 ? " now" : ""), m.text);
-      if (m.live) b.appendChild(el("span", "caret"));
-      chat.appendChild(b);
-    });
-    body.appendChild(chat);
-    var last = msgs[msgs.length - 1];
-    if (last && last.who !== "vous" && /\?\s*$/.test(last.text) && !paused) {
-      var h = el("div", "hintbox"); h.appendChild(svg("mic"));
-      h.appendChild(el("span", null, "Répondez simplement « oui » ou « non » à voix haute."));
-      body.appendChild(h);
-    }
-    var lis = el("div", "listen" + (paused ? " grey" : speaking ? " blue" : ""));
-    lis.appendChild(wave(paused));
-    lis.appendChild(el("div", null, paused ? "En pause — je n'écoute plus." : speaking ? "Colette vous parle…" : "Je vous écoute… prenez votre temps."));
-    body.appendChild(lis);
-    var row = el("div", "row2");
-    row.appendChild(button("sec", paused ? "Reprendre" : "Pause", function () { send({ type: paused ? "resume" : "pause" }); }));
-    row.appendChild(button("dark", "Arrêter l'appel", function () { state.call = false; render(); send({ type: "hangup" }); }));
-    foot.appendChild(row);
-  }
-
-  // ---- 05 · navigue (H agit) ----
-  function working(body, foot) {
-    var steps = state.steps || [];
-    body.appendChild(el("h2", null, state.title || "Je m'occupe de votre demande"));
-    if (steps.length) {
-      var cur = 0;
-      steps.forEach(function (s, i) { if (s.state === "doing") cur = i + 1; });
-      var doneN = steps.filter(function (s) { return s.state === "done"; }).length;
-      if (!cur) cur = Math.min(doneN + 1, steps.length);
-      body.appendChild(el("div", "count", "Étape " + cur + " sur " + steps.length));
-      var segs = el("div", "segs");
-      steps.forEach(function (s, i) { segs.appendChild(el("i", i < cur ? "on" : null)); });
-      body.appendChild(segs);
-      var ul = el("ul", "steps");
-      var start = Math.max(0, Math.min(cur - 3, steps.length - 6));
-      steps.slice(start, start + 6).forEach(function (s) {
-        var li = el("li", s.state);
-        var d = el("span", "dot");
-        if (s.state === "done") d.appendChild(svg("check"));
-        li.appendChild(d);
-        li.appendChild(el("span", "lbl", s.label));
-        li.appendChild(el("small", null, s.state === "done" ? "Fait" : s.state === "doing" ? "En cours" : "À venir"));
-        ul.appendChild(li);
-      });
-      body.appendChild(ul);
-    }
-    var said = lastColette();
-    var says = el("div", "says");
-    says.appendChild(el("b", null, "Colette dit : "));
-    says.appendChild(document.createTextNode(state.status === "paused" ? "Je suis en pause. Vous avez la main."
-      : said || "Vous n'avez rien à faire. Je vous préviens si j'ai besoin de vous."));
-    body.appendChild(says);
-    var paused = state.status === "paused";
-    var row = el("div", "row2");
-    // .hold : seuls boutons cliquables pendant que H agit (simple clic).
-    row.appendChild(button("sec hold", paused ? "Reprendre" : "Pause", function () { send({ type: paused ? "resume" : "pause" }); }));
-    row.appendChild(button("dark hold", "Arrêter", function () { send({ type: "stop" }); }));
-    foot.appendChild(row);
-  }
-
-  // ---- 06 · votre accord ----
-  function confirm(body, foot) {
-    var c = state.confirm || {};
-    body.appendChild(el("div", "tag", "À vous"));
-    body.appendChild(el("h2", null, c.title || c.text || "Je valide ?"));
-    var pts = c.bullets || [];
-    if (pts.length) {
-      var ul = el("ul", "pts");
-      pts.forEach(function (p) { var li = el("li"); li.appendChild(svg("tick")); li.appendChild(el("span", null, p)); ul.appendChild(li); });
-      body.appendChild(ul);
-    }
-    var a = el("div", "ambre"); a.appendChild(svg("mic"));
-    a.appendChild(el("span", null, "Dites « oui » ou touchez le bouton. Rien ne change sans votre accord."));
-    body.appendChild(a);
-    foot.appendChild(button("", c.yes || "Oui, je suis d'accord", function () { send({ type: "confirm", value: true }); }));
-    foot.appendChild(button("sec", c.no || "Non, ne rien changer", function () { send({ type: "confirm", value: false }); }));
-  }
-
-  // ---- 07 · c'est fait (ou arrêté / refusé) ----
-  function done(body, foot) {
-    var o = state.outcome || {};
-    var ok = o.kind === "success";
-    var b = el("div", "badge " + (ok ? "ok" : "info"));
-    b.appendChild(svg(ok ? "tick" : "info"));
-    body.appendChild(b);
-    body.appendChild(el("h2", "big1", o.title || (ok ? "C'est fait !" : "Rien n'a été changé")));
-    if (o.text) { var p = el("p", null, o.text); p.style.marginTop = "14px"; body.appendChild(p); }
-    if (!ok && o.nothing_changed) body.appendChild(okPill());
-    var items = o.summary || [];
-    if (items.length) {
-      var box = el("div", "box");
-      box.appendChild(el("h3", null, "Ce que j'ai fait pour vous"));
-      var ol = el("ol");
-      items.forEach(function (s) { ol.appendChild(el("li", null, s)); });
-      box.appendChild(ol);
-      body.appendChild(box);
-    }
-    var row = el("div", "row2");
-    row.appendChild(button("sec", "Écouter ce résumé", function () { send({ type: "replay" }); }));
-    row.appendChild(button("dark", "Terminer l'appel", function () { state.open = false; render(); send({ type: "later" }); }));
-    foot.appendChild(row);
-  }
-
-  function okPill() {
-    var g = el("div", "okpill");
-    g.appendChild(svg("shield"));
-    g.appendChild(el("span", null, "Rien n'a été modifié sur votre compte."));
-    return g;
-  }
-
-  // ---- 10 · échec ----
-  function failed(body, foot) {
-    var o = state.outcome || {};
-    var b = el("div", "badge warn"); b.appendChild(svg("warn")); body.appendChild(b);
-    body.appendChild(el("h2", null, o.title || "Je n'ai pas pu terminer"));
-    var p = el("p", null, (o.text || "Le site ne répond pas comme prévu.") + " Ce n'est pas de votre faute.");
-    p.style.marginTop = "12px";
-    body.appendChild(p);
-    if (o.nothing_changed) body.appendChild(okPill());
-    body.appendChild(el("div", "q", "Que voulez-vous faire ?"));
-    var rows = el("div", "rows");
-    rows.appendChild(rowButton("Parler à un conseiller", function () { send({ type: "advisor" }); }));
-    rows.appendChild(rowButton("Réessayer une fois", function () { send({ type: "retry" }); }));
-    body.appendChild(rows);
-    foot.appendChild(button("sec", "Laisser pour plus tard", function () { state.open = false; render(); send({ type: "later" }); }));
-  }
-
-  // ---- La page se pousse à gauche pour faire place au panneau : rien n'est caché dessous ----
+  // ---- La page se pousse à gauche pour faire place au panneau (rien n'est caché dessous) ----
   var pushStyle = null, pushed = false, fixTimer = null;
   var FX = "data-colette-fx";
 
-  function setPush(open) {
-    if (open === pushed) return;
-    pushed = open;
-    if (!open) {
-      if (pushStyle && pushStyle.parentNode) pushStyle.parentNode.removeChild(pushStyle);
-      clearInterval(fixTimer); fixTimer = null;
-      restoreFixed();
-    } else {
+  function setPush(on) {
+    if (on === pushed) return;
+    pushed = on;
+    if (on) {
       if (!pushStyle) {
         pushStyle = document.createElement("style");
         pushStyle.setAttribute("data-colette", "1");
@@ -546,6 +370,10 @@
       (document.head || document.documentElement).appendChild(pushStyle);
       fixFixed();
       fixTimer = setInterval(fixFixed, 1500);  // bannières / en-têtes ajoutés après coup
+    } else {
+      if (pushStyle && pushStyle.parentNode) pushStyle.parentNode.removeChild(pushStyle);
+      clearInterval(fixTimer); fixTimer = null;
+      restoreFixed();
     }
     window.dispatchEvent(new Event("resize"));  // les sites recalculent leur mise en page
   }
@@ -563,9 +391,10 @@
       if (cs.position !== "fixed" && cs.position !== "sticky") continue;
       var r = e.getBoundingClientRect();
       if (r.width === 0 || r.right <= limit + 1) continue;
-      e.setAttribute(FX, JSON.stringify({ right: e.style.right, maxWidth: e.style.maxWidth }));
+      e.setAttribute(FX, JSON.stringify({ right: e.style.right, maxWidth: e.style.maxWidth, left: e.style.left }));
       if (r.left > limit - r.width / 2 && r.width < limit) {  // ancré à droite (ex. bouton de chat)
-        e.style.setProperty("right", ((parseFloat(cs.right) || 0) + PANEL_W) + "px", "important");
+        var right = parseFloat(cs.right) || 0;
+        e.style.setProperty("right", (right + PANEL_W) + "px", "important");
       } else {  // pleine largeur (bandeau, en-tête) : on le borne à la zone de la page
         e.style.setProperty("max-width", "calc(100vw - " + PANEL_W + "px)", "important");
       }
@@ -577,40 +406,33 @@
     for (var i = 0; i < fixed.length; i++) {
       var e = fixed[i], o = {};
       try { o = JSON.parse(e.getAttribute(FX)) || {}; } catch (err) { /* ignore */ }
-      for (var p in o) e.style[p] = o[p] || "";
+      e.style.right = o.right || ""; e.style.maxWidth = o.maxWidth || ""; e.style.left = o.left || "";
       e.removeAttribute(FX);
     }
   }
 
-  // ---- « Je clique ici » : cadre sur l'élément que l'agent H vient de cliquer ----
-  var markTarget = null, markBox = null, markTimer = null;
-
-  function setMark(t) {
-    var target = (t.closest && t.closest("a,button,label,li,tr,[role=button],[role=link],input,select,textarea")) || t;
-    if (target === document.body || target === document.documentElement) return;
-    markTarget = target;
-    if (!markBox) {
-      markBox = el("div", "mark");
-      markBox.appendChild(el("span", null, "↑ Je clique ici"));
-    }
-    if (!markTimer) markTimer = setInterval(updateMark, 300);
-    updateMark();
-    if (!markBox.isConnected && root) { var w = root.getElementById("wrap"); if (w) w.appendChild(markBox); }
+  // Bouton à appui maintenu : un clic bref (celui de l'agent H) ne fait rien.
+  function holdable(btn, action) {
+    btn.appendChild(el("span", "fill"));
+    btn.setAttribute("aria-label", btn.textContent + " (maintenir appuyé)");
+    if (hold && hold.action === action) btn.classList.add("holding");
+    btn.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      hold = { action: action, t0: Date.now() };
+      btn.classList.add("holding");
+    });
   }
-
-  function updateMark() {
-    if (!markBox) return;
-    if (!state.busy || !markTarget || !markTarget.isConnected) {
-      clearInterval(markTimer); markTimer = null;
-      if (markBox.parentNode) markBox.parentNode.removeChild(markBox);
-      markBox = null; markTarget = null;
-      return;
+  window.addEventListener("pointerup", function () {
+    if (!hold) return;
+    var h = hold; hold = null;
+    var held = Date.now() - h.t0;
+    if (held >= HOLD_MS) {
+      if (h.action === "stop") send({ type: "stop" });
+      else send({ type: state.status === "paused" ? "resume" : "pause" });
     }
-    var r = markTarget.getBoundingClientRect();
-    var pad = 6;
-    markBox.style.left = (r.left - pad) + "px"; markBox.style.top = (r.top - pad) + "px";
-    markBox.style.width = (r.width + 2 * pad) + "px"; markBox.style.height = (r.height + 2 * pad) + "px";
-  }
+    render();
+  }, true);
+  window.addEventListener("pointercancel", function () { hold = null; render(); }, true);
 
   function connect() {
     try { ws = new WebSocket(WS_URL); } catch (e) { setTimeout(connect, 1000); return; }
@@ -625,23 +447,29 @@
     ws.onerror = function () { /* onclose suit */ };
   }
 
-  window.__colette.getState = function () { return { state: state, connected: connected, screen: screen() }; };
+  window.__colette.getState = function () { return { state: state, connected: connected }; };
   window.__colette.root = function () { return root; };
   window.__colette.onState = function (s) { connected = true; state = s; render(); };
 
-  // Changer de page ou d'onglet ne ferme JAMAIS la bulle : l'état vit côté serveur et la bulle
-  // réinjectée dans la nouvelle page reprend là où elle en était (appel et démarche continuent).
+  // Quitter la page (autre onglet, fenêtre réduite) → on ferme la bulle, donc le micro.
+  // Délai : une navigation masque aussi le document, mais ses timers ne tournent plus ensuite.
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "hidden") return;
+    setTimeout(function () {
+      if (document.visibilityState === "hidden" && state.open) {
+        state.open = false; render(); send({ type: "close", reason: "page_hidden" });
+      }
+    }, 1500);
+  });
 
-  // Diagnostic : où atterrissent vraiment les clics (ceux de H inclus) ? + cadre « Je clique ici ».
+  // Diagnostic : où atterrissent vraiment les clics (ceux de H inclus) ?
   window.addEventListener("mousedown", function (e) {
     var t = e.target, d = "";
-    if (t === host) return;  // clic sur la bulle elle-même
     // Jamais la valeur d'un champ (mot de passe, identifiant…) : seulement balise, id et texte visible.
     if (t && t.tagName) {
       var isField = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable;
       d = t.tagName.toLowerCase() + (t.id ? "#" + t.id : "") + (t.type ? "[" + t.type + "]" : "") +
           (isField ? "" : " " + ((t.innerText || "") + "").trim().slice(0, 40));
-      if (state.busy) setMark(t);
     }
     send({ type: "debug_click", x: Math.round(e.clientX), y: Math.round(e.clientY),
            w: window.innerWidth, h: window.innerHeight, trusted: e.isTrusted, target: d });
