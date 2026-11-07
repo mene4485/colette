@@ -509,8 +509,7 @@ class ColetteVoice:
             elif t == "hangup":
                 await self.say("Au revoir, à bientôt.")
         elif t == "reset":
-            if not running:
-                await self.say("Que puis-je faire d'autre pour vous ?")
+            pass  # retour à l'écran d'accueil, micro coupé : rien à dire
         elif t == "replay":
             await self.say(self._outcome_speech())
         elif t == "advisor":
@@ -626,6 +625,7 @@ class ColetteVoice:
                 result, speak = {"statut": "non validé : la personne a dit non, rien n'a été changé",
                                  "resultat": body}, False
         except asyncio.CancelledError:
+            self.state.update(busy=False)
             raise
         except Exception as e:
             if self._stopped or getattr(self.runner, "status", None) == "interrupted":
@@ -642,12 +642,23 @@ class ColetteVoice:
                 await self.runner.close()
             except Exception as e:
                 logger.warning("Fermeture de la session H : {}", e)
-            self.state.update(status="done", busy=False)
-        self.state.update(outcome=self._outcome(result))
-        result["suite"] = ("Cette démarche est terminée. Si la personne demande une nouvelle démarche, "
-                           "reformule puis rappelle run_demarche normalement.")
+            self.state.update(status="done")
+        # Fin : écran final et dernière phrase en même temps, une seule fois, puis plus rien.
+        # Le LLM ne résume plus (il redisait le résultat ~10 s après l'écran « C'est fait »).
+        outcome = self._outcome(result)
+        self._narrated_seq = self._step_seq  # narration en attente : jetée
+        if self.bot_speaking:  # narration en cours : coupée (l'interruption vide aussi les files :
+            await self._hush()  # on laisse passer un instant avant la dernière phrase)
+            await asyncio.sleep(0.5)
+        self.state.update(outcome=outcome, busy=False, call=False, heard="")  # appel fini, micro coupé
+        final = self._final_speech(outcome)
+        if final:
+            await self.say(final)
+        result["suite"] = ("Cette démarche est terminée et la personne a déjà entendu le résultat : "
+                           "ne le répète pas. Si elle fait une nouvelle demande, reformule puis rappelle "
+                           "run_demarche normalement.")
         logger.info("🛠️  run_demarche → {}", result)
-        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=speak))
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=False))
 
     # ---- plan annoncé par H (annoncer_etapes / etape_terminee) ----------------
     async def _on_plan(self, labels: list[str]) -> None:
@@ -730,6 +741,18 @@ class ColetteVoice:
                    if s["state"] == "done" and s["label"] != "Comprendre votre demande"]
         return {"kind": "success", "title": "C'est fait !", "text": text, "summary": summary[-6:],
                 "nothing_changed": False}
+
+    @staticmethod
+    def _final_speech(outcome: dict) -> str:
+        """Dernière phrase dite au moment où l'écran final apparaît (rien après)."""
+        kind = outcome.get("kind")
+        if kind == "success":
+            text = outcome.get("text") or ""
+            return f"C'est fait. {text}".strip()
+        if kind == "failed":
+            tail = " Rien n'a été modifié sur votre compte." if outcome.get("nothing_changed") else ""
+            return "Je n'ai pas pu terminer. Ce n'est pas de votre faute." + tail
+        return ""  # arrêtée : silence ; refusée : « je ne valide rien » déjà dit à la question
 
     def _outcome_speech(self) -> str:
         o = self.state.state.outcome
