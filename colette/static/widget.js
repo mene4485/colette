@@ -535,8 +535,7 @@
       var cb = el("div", "callbar" + (!live ? " ended" : paused ? " paused" : ""));
       var l = el("span"); l.appendChild(el("i"));
       l.appendChild(document.createTextNode(!live ? "Appel terminé · micro coupé" : paused ? "En pause · micro coupé" : "Appel en cours · micro allumé"));
-      var r = el("span"); r.appendChild(svg("lock")); r.appendChild(document.createTextNode("Je ne garde rien"));
-      cb.appendChild(l); cb.appendChild(r);
+      cb.appendChild(l);
       side.appendChild(cb);
     }
 
@@ -570,9 +569,6 @@
     talk.appendChild(el("b", null, "Appuyer pour parler"));
     talk.onclick = function () { state.call = true; render(); send({ type: "call" }); };
     body.appendChild(talk);
-    var lock = el("div", "lock"); lock.appendChild(svg("lock"));
-    lock.appendChild(el("span", null, "Je ne garde rien de ce que vous dites."));
-    body.appendChild(lock);
     var shortcuts = state.shortcuts || [];
     if (shortcuts.length) {
       body.appendChild(el("div", "sep"));
@@ -605,11 +601,6 @@
     });
     body.appendChild(chat);
     var last = msgs[msgs.length - 1];
-    if (last && last.who !== "vous" && /\?\s*$/.test(last.text) && !paused) {
-      var h = el("div", "hintbox"); h.appendChild(svg("mic"));
-      h.appendChild(el("span", null, "Répondez simplement « oui » ou « non » à voix haute."));
-      body.appendChild(h);
-    }
     var lis = el("div", "listen" + (paused ? " grey" : speaking ? " blue" : ""));
     lis.appendChild(wave(paused));
     lis.appendChild(el("div", null, paused ? "En pause — je n'écoute plus." : speaking ? "Colette vous parle…" : "Je vous écoute… prenez votre temps."));

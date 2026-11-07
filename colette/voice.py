@@ -60,12 +60,16 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.cartesia.tts import CartesiaTTSService
-from pipecat.services.gladia.config import LanguageConfig
+from pipecat.services.gladia.config import LanguageConfig, MessagesConfig
 from pipecat.services.gladia.stt import GladiaSTTService
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.openrouter.llm import OpenRouterLLMService
 from pipecat.transcriptions.language import Language
 from pipecat.turns.user_mute import AlwaysUserMuteStrategy
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import TurnAnalyzerUserTurnStopStrategy
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
 from colette.h_agent import VALIDATE_STEP, Step, split_confirmation
@@ -144,6 +148,7 @@ class VoiceGate(FrameProcessor):
         self._question = ""
         self._relanced = False
         self._last_remind = 0.0
+        self._barged_at = 0.0
         self._tasks: set[asyncio.Task] = set()
 
     @property
@@ -210,6 +215,13 @@ class VoiceGate(FrameProcessor):
         task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def _interrupts(self, text: str) -> bool:
+        """Au moins 2 mots, pas du bruit, et pas l'écho de ce que Colette est en train de dire."""
+        norm = normalize(text)
+        if len(norm.split()) < 2 or is_noise(text):
+            return False
+        return norm not in normalize(self.voice.state.state.subtitle or "")
 
     def barge(self, text: str) -> None:
         """Transcription reçue pendant que Colette parle : seulement une commande courte, pas l'écho."""
@@ -284,8 +296,23 @@ class VoiceGate(FrameProcessor):
             if isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame)) and self.voice.command_window() \
                     and not self.voice.mic_open():
                 # Colette parle : on n'écoute que « arrêtez / taisez-vous / quittez l'appel ».
-                if isinstance(frame, TranscriptionFrame) and (frame.text or "").strip():
-                    self.barge(frame.text.strip())
+                text = (frame.text or "").strip()
+                if self.voice.free_barge and self._interrupts(text):
+                    # Mode en ligne (anti-écho du navigateur) : une vraie phrase coupe Colette tout de
+                    # suite (dès la transcription partielle), puis la phrase complète est traitée.
+                    now = time.monotonic()
+                    if now - self._barged_at > 2.0:
+                        self._barged_at = now
+                        logger.info("✋ Interruption : {!r}", text)
+                        asyncio.create_task(self.voice._hush())
+                    if isinstance(frame, TranscriptionFrame):
+                        logger.info("🗣️  Utilisateur (interruption) : {}", text)
+                        self.voice.on_user_final(text)
+                        if not self.route(text):
+                            asyncio.create_task(self.voice._ask_llm(text))
+                    return
+                if isinstance(frame, TranscriptionFrame) and text:
+                    self.barge(text)
                 return
             if isinstance(frame, TranscriptionFrame):
                 text = (frame.text or "").strip()
@@ -363,6 +390,8 @@ class ColetteVoice:
         self.state = state
         # mode en ligne : connexion faite par la personne sur sa page, session partagée par la bulle
         self.handoff = handoff
+        # mode en ligne : le navigateur supprime l'écho → une vraie phrase peut couper Colette
+        self.free_barge = handoff or _env_flag("COLETTE_FREE_BARGE")
         # None : micro/HP du laptop (démo locale) ; sinon transport fourni (mode en ligne : WebSocket)
         self._transport = transport
         self._pipeline_params = pipeline_params or {}
@@ -396,6 +425,9 @@ class ColetteVoice:
 
         self.worker: Optional[PipelineWorker] = None
         self.gate = VoiceGate(self)
+        # Interruption émise ICI (après l'agrégateur) : pendant que Colette parle, l'agrégateur
+        # (AlwaysUserMuteStrategy) supprime toute InterruptionFrame venue de l'amont.
+        self.tap = LLMTap(self)
         self.narrator = Narrator()
         state.on_client_message(self.on_client_message)
         state.update(shortcuts=list_shortcuts())
@@ -470,6 +502,8 @@ class ColetteVoice:
             settings=GladiaSTTService.Settings(
                 model="solaria-1",
                 language_config=LanguageConfig(languages=["fr"], code_switching=False),
+                # partielles : « Vous dites… » en direct et interruption dès les premiers mots
+                messages_config=MessagesConfig(receive_partial_transcripts=True),
             ),
         )
         llm = OpenRouterLLMService(
@@ -507,6 +541,11 @@ class ColetteVoice:
             context,
             user_params=LLMUserAggregatorParams(
                 vad_analyzer=SileroVADAnalyzer(),
+                # Fin de tour : smart-turn, mais au plus 1,5 s de silence quand il juge la phrase
+                # incomplète (défaut 3 s : attentes de 3 s et plus constatées le 7 nov au soir).
+                user_turn_strategies=UserTurnStrategies(stop=[TurnAnalyzerUserTurnStopStrategy(
+                    turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams(
+                        stop_secs=float(os.getenv("COLETTE_TURN_STOP_SECS", "1.5")))))]),
                 user_mute_strategies=[] if self.barge_in else [AlwaysUserMuteStrategy()],
             ),
         )
@@ -518,7 +557,7 @@ class ColetteVoice:
             self.gate,
             aggregators.user(),
             llm,
-            LLMTap(self),
+            self.tap,
             tts,
             transport.output(),
             StateTap(self),
@@ -919,8 +958,12 @@ class ColetteVoice:
     async def _hush(self) -> None:
         """Coupe Colette au milieu de sa phrase (TTS et réponse du LLM en cours)."""
         self._narrated_seq = self._step_seq  # narration en attente jetée
-        if self.worker is not None:
-            await self.worker.queue_frame(InterruptionWorkerFrame())
+        try:
+            await self.tap.broadcast_interruption()  # → TTS + sortie audio (aval), LLM (amont)
+        except Exception as e:
+            logger.warning("Interruption via LLMTap impossible ({}) → worker", e)
+            if self.worker is not None:
+                await self.worker.queue_frame(InterruptionWorkerFrame())
 
     async def _ask_llm(self, text: str) -> None:
         """Envoie une phrase au LLM comme si la personne l'avait dite."""
