@@ -4,11 +4,15 @@ description: Use when the person wants to change their contact email address or 
 label: Modifier mes coordonnées
 keywords: coordonnées | coordonnees | adresse | e-mail | email | mail | informations personnelles
 steps: Ouvrir votre espace abonné | Vous connecter | Ouvrir vos informations personnelles | Modifier vos coordonnées | Valider avec votre accord
+steps_view: Ouvrir votre espace abonné | Vous connecter | Ouvrir vos informations personnelles | Lire vos coordonnées
 order: 3
 ---
 # Change personal details (coordonnées) in the Free Mobile customer area
 
 Only two details are covered: the contact email address and the postal address.
+If the person only wants to SEE their current details (voir, consulter, récupérer…), open
+"Mes infos personnelles", read the requested detail and give it in your answer. Change nothing,
+click no "Modifier" button.
 The new values come from the user's task. If the task does not give the complete new value, call
 `ask_user` to get it. Never invent or complete a value yourself.
 

@@ -10,8 +10,9 @@ Chaque fichier commence par un front matter :
 
 Aucune liste en dur : tout fichier `.md` déposé dans le dossier est envoyé à l'agent.
 Champs facultatifs (bulle seulement, jamais envoyés à H) : `label` (raccourci de l'écran 2,
-en français), `order` (tri des raccourcis), `keywords` et `steps` (séparés par « | ») : plan
-affiché dès le début quand un mot-clé apparaît dans l'objectif de la démarche.
+en français), `order` (tri des raccourcis), `keywords`, `steps` et `steps_view` (séparés par
+« | ») : plan affiché dès le début quand un mot-clé apparaît dans l'objectif de la démarche
+(`steps_view` quand la personne veut seulement consulter).
 """
 
 from __future__ import annotations
@@ -89,9 +90,24 @@ def list_shortcuts(directory: Path = SKILLS_DIR) -> list[dict]:
     return [item for _, item in sorted(items, key=lambda x: (x[0], x[1]["label"]))]
 
 
+VIEW_WORDS = ("voir", "consulter", "récupérer", "recuperer", "afficher", "regarder", "connaître",
+              "connaitre", "vérifier", "verifier", "lire", "savoir", "quelle est", "quel est", "retrouver")
+CHANGE_WORDS = ("modifier", "changer", "mettre à jour", "remplacer", "corriger", "passer à", "passer au")
+
+
+def is_view_request(objectif: str) -> bool:
+    """Vrai si la personne veut seulement voir une information (pas la changer)."""
+    text = f" {(objectif or '').lower()} "
+    view = any(f" {w}" in text for w in VIEW_WORDS)
+    change = any(f" {w}" in text for w in CHANGE_WORDS)
+    return view and not change
+
+
 def match_plan(objectif: str, directory: Path = SKILLS_DIR) -> "tuple[str, list[str]] | None":
-    """(skill, étapes) du premier skill dont un mot-clé apparaît dans l'objectif, sinon None."""
+    """(skill, étapes) du premier skill dont un mot-clé apparaît dans l'objectif, sinon None.
+    Demande de consultation → `steps_view` du skill s'il en a (rien à modifier ni à valider)."""
     text = (objectif or "").lower()
+    view = is_view_request(objectif)
     best = None
     for path in sorted(directory.glob("*.md")):
         try:
@@ -100,6 +116,8 @@ def match_plan(objectif: str, directory: Path = SKILLS_DIR) -> "tuple[str, list[
             continue
         keywords = [k.strip().lower() for k in meta.get("keywords", "").split("|") if k.strip()]
         steps = [st.strip() for st in meta.get("steps", "").split("|") if st.strip()]
+        if view and meta.get("steps_view"):
+            steps = [st.strip() for st in meta["steps_view"].split("|") if st.strip()]
         if not steps:
             continue
         pos = min((text.find(k) for k in keywords if k in text), default=-1)

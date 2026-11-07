@@ -5,7 +5,7 @@
  *
  * Écrans (maquettes docs/design/*.png) :
  *   1 fermée · 2 ouverte (Disponible) · 3 appel en cours (écoute / parle / pause)
- *   5 navigue (H agit : pas de voile, bandeau bleu, panneau non cliquable sauf Pause/Arrêter en appui maintenu)
+ *   5 navigue (H agit : bandeau bleu, panneau non cliquable sauf Pause/Arrêter, simple clic)
  *   6 accord · 7 terminé (ou arrêté / refusé) · 10 échec
  */
 (function () {
@@ -17,8 +17,6 @@
   var WS_URL = "ws://localhost:8765";
   var PANEL_W = 440;  // largeur de la zone latérale ; la page est rétrécie d'autant (rien n'est caché)
   var BANNER_H = 52;  // bandeau « Colette utilise cette page » : la page est poussée vers le bas d'autant
-  var HOLD_MS = 800;  // appui maintenu exigé sur Pause/Arrêter pendant que l'agent H agit
-  var hold = null;    // {action, t0} — hors du DOM : render() reconstruit tout à chaque état
   var state = { open: false, status: "idle", steps: [], subtitle: "", confirm: null };
   var connected = false;
   var ws = null;
@@ -123,12 +121,8 @@
     ".steps small{display:block;font-size:14px;font-weight:700;margin-top:3px;color:" + MUTED + "}",
     ".done small{color:" + GREEN + "}.doing small{color:" + BLUE + "}",
     ".calm{margin-top:22px}",
-    ".hint{font-size:14px;color:" + MUTED + ";text-align:center;margin-top:-4px}",
-    ".fill{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(33,85,211,.18);pointer-events:none!important}",
-    ".btn.red .fill{background:rgba(180,35,24,.16)}",
-    ".holding .fill{width:100%;transition:width " + HOLD_MS + "ms linear}",
     /* Pendant que H agit : le panneau laisse passer les clics (H ne peut ni le cliquer ni le fermer) ;
-       seuls Pause/Arrêter restent actifs, en appui maintenu (H fait des clics brefs). */
+       seuls Pause/Arrêter restent actifs (simple clic). */
     ".guard .card,.guard .card *{pointer-events:none}",
     ".guard .card .hold{pointer-events:auto}",
     /* écran 6 */
@@ -278,7 +272,7 @@
     var scr = screen();
     // subtitle / heard (mot à mot) ne sont plus affichés : ils ne déclenchent pas de reconstruction
     var shown = {}; for (var f in state) if (f !== "subtitle" && f !== "heard") shown[f] = state[f];
-    var key = JSON.stringify([shown, connected, hold && hold.action]);
+    var key = JSON.stringify([shown, connected]);
     if (key === lastKey) return;  // rien n'a changé : pas de reconstruction
     lastKey = key;
     var wrap = root.getElementById("wrap");
@@ -445,10 +439,13 @@
     transcript(body);
     var paused = state.status === "paused";
     var row = el("div", "row2");
-    row.appendChild(holdable(button("sec", paused ? "Reprendre" : "Pause", paused ? "play" : "pause"), "pause"));
-    row.appendChild(holdable(button("sec red", "Arrêter Colette"), "stop"));
+    // Simple clic (demandé) ; .hold : seuls boutons cliquables pendant que H agit.
+    var pz = button("sec hold", paused ? "Reprendre" : "Pause", paused ? "play" : "pause", function () {
+      send({ type: paused ? "resume" : "pause" });
+    });
+    var stp = button("sec red hold", "Arrêter Colette", null, function () { send({ type: "stop" }); });
+    row.appendChild(pz); row.appendChild(stp);
     foot.appendChild(row);
-    foot.appendChild(el("div", "hint", "Maintenez le bouton appuyé"));
   }
 
   // ---- 6 · accord ----
@@ -616,30 +613,6 @@
     markBox.style.left = (r.left - pad) + "px"; markBox.style.top = (r.top - pad) + "px";
     markBox.style.width = (r.width + 2 * pad) + "px"; markBox.style.height = (r.height + 2 * pad) + "px";
   }
-
-  // Bouton à appui maintenu : un clic bref (celui de l'agent H) ne fait rien.
-  function holdable(btn, action) {
-    btn.classList.add("hold");
-    btn.appendChild(el("span", "fill"));
-    btn.setAttribute("aria-label", btn.textContent + " (maintenir appuyé)");
-    if (hold && hold.action === action) btn.classList.add("holding");
-    btn.addEventListener("pointerdown", function (e) {
-      e.preventDefault();
-      hold = { action: action, t0: Date.now() };
-      btn.classList.add("holding");
-    });
-    return btn;
-  }
-  window.addEventListener("pointerup", function () {
-    if (!hold) return;
-    var h = hold; hold = null;
-    if (Date.now() - h.t0 >= HOLD_MS) {
-      if (h.action === "stop") send({ type: "stop" });
-      else send({ type: state.status === "paused" ? "resume" : "pause" });
-    }
-    render();
-  }, true);
-  window.addEventListener("pointercancel", function () { hold = null; render(); }, true);
 
   function connect() {
     try { ws = new WebSocket(WS_URL); } catch (e) { setTimeout(connect, 1000); return; }

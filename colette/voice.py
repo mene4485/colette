@@ -42,6 +42,7 @@ from pipecat.frames.frames import (
     Frame,
     InputAudioRawFrame,
     InterimTranscriptionFrame,
+    InterruptionWorkerFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMMessagesAppendFrame,
@@ -72,7 +73,7 @@ from colette.h_agent import VALIDATE_STEP, Step, split_confirmation
 from colette.intents import is_login_done, is_login_question, is_noise, parse_intent
 from colette.narration import Narrator
 from colette.prompts import CONFIRMED_FOLLOW_UP, GREETING, H_GOAL_TEMPLATE, SYSTEM_PROMPT
-from colette.skills_loader import list_shortcuts, match_plan
+from colette.skills_loader import is_view_request, list_shortcuts, match_plan
 from colette.state import StateServer
 
 DEFAULT_LLM_MODEL = "google/gemini-2.5-flash"
@@ -338,8 +339,8 @@ class ColetteVoice:
         st = self.state.state
         if not (st.call or st.busy):
             return False
-        if st.status == "paused" and not self.working:
-            return False  # « Pause » pendant l'appel : Colette n'écoute plus
+        if st.status == "paused" or (self._stopped and self.working):
+            return False  # Pause ou Arrêter : Colette n'enregistre plus rien
         if self.barge_in:
             return True
         if self.bot_speaking:
@@ -519,19 +520,23 @@ class ColetteVoice:
                 self.state.update(outcome=None, call=True, open=True)
                 await self._ask_llm(f"Réessaie une fois la même démarche : {self._last_objectif}")
         elif t == "stop":
+            # Arrêter : tout s'arrête tout de suite, en silence, micro coupé → écran récapitulatif.
             self.gate.cancel_pending()
+            await self._hush()
             if running and not self._stopped:
                 self._stopped = True
                 self.paused = False
-                await self.say("D'accord, j'arrête tout.")
+                self.state.update(outcome=self._outcome({"statut": "arrêtée par la personne"}),
+                                  busy=False, call=False, confirm=None, status="done")
                 try:
                     await self.runner.cancel()
                 except Exception as e:
                     logger.warning("Annulation H : {}", e)
         elif t == "pause":
+            # Pause : silence immédiat, micro coupé, rien n'est dit.
+            await self._hush()
             if running and not self.paused and not self._stopped:
                 self.paused = True
-                await self.say("D'accord, je vous laisse la main. Dites « continuez » quand vous voulez.")
                 try:
                     await self.runner.pause()
                 except Exception as e:
@@ -539,7 +544,6 @@ class ColetteVoice:
         elif t == "resume":
             if running and self.paused and not self._stopped:
                 self.paused = False
-                await self.say("Je reprends.")
                 try:
                     await self.runner.resume()
                 except Exception as e:
@@ -576,6 +580,10 @@ class ColetteVoice:
         try:
             goal = H_GOAL_TEMPLATE.format(objectif=objectif or "changer de forfait Free Mobile")
             plan = match_plan(objectif)
+            if is_view_request(objectif):
+                goal += ("\nLa personne veut seulement CONSULTER une information : ne modifie rien, ne "
+                         "clique sur aucun bouton « Modifier », « Enregistrer » ou « Valider ». Trouve "
+                         "l'information, lis-la et donne-la dans ta réponse finale.\n")
             if plan:  # toutes les étapes connues dès le début, affichées et lues une fois
                 skill, labels = plan
                 logger.info("📋 Plan du skill {} : {}", skill, labels)
@@ -620,7 +628,7 @@ class ColetteVoice:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            if self._stopped:
+            if self._stopped or getattr(self.runner, "status", None) == "interrupted":
                 result, speak = {"statut": "arrêtée par la personne"}, False
             else:
                 logger.exception("Démarche en échec")
@@ -706,9 +714,12 @@ class ColetteVoice:
         if statut.startswith("échec"):
             return {"kind": "failed", "title": "Je n'ai pas pu terminer",
                     "text": "Le site ne répond pas comme prévu.", "summary": [], "nothing_changed": nothing_changed}
+        done_steps = [s["label"] for s in self.state.state.steps
+                      if s["state"] == "done" and s["label"] != "Comprendre votre demande"]
         if statut.startswith("arrêtée"):
             return {"kind": "stopped", "title": "D'accord, j'ai arrêté",
-                    "text": "Je me suis arrêtée à votre demande.", "summary": [], "nothing_changed": nothing_changed}
+                    "text": "Je me suis arrêtée à votre demande.", "summary": done_steps[-6:],
+                    "nothing_changed": nothing_changed}
         if statut.startswith("non validé"):
             return {"kind": "refused", "title": "Rien n'a été changé",
                     "text": "Vous avez dit non : je n'ai rien validé.", "summary": [], "nothing_changed": True}
@@ -730,6 +741,12 @@ class ColetteVoice:
         if o.get("kind") != "success" and o.get("nothing_changed"):
             parts.append("Rien n'a été modifié sur votre compte.")
         return " ".join(p for p in parts if p)
+
+    async def _hush(self) -> None:
+        """Coupe Colette au milieu de sa phrase (TTS et réponse du LLM en cours)."""
+        self._narrated_seq = self._step_seq  # narration en attente jetée
+        if self.worker is not None:
+            await self.worker.queue_frame(InterruptionWorkerFrame())
 
     async def _ask_llm(self, text: str) -> None:
         """Envoie une phrase au LLM comme si la personne l'avait dite."""
