@@ -49,6 +49,32 @@ DEFAULT_INSTRUCTIONS = (
 )
 
 
+def describe_action(req: dict) -> str:
+    """Phrase courte en français décrivant une action Holo (go_to_web, click_web…)."""
+    name = req.get("tool_name") or ""
+    args = req.get("args") or {}
+    element = (args.get("element") or "").strip()
+    if name in ("ask_user", "answer"):
+        return ""  # la question est déjà remontée par le tool
+    if name == "go_to_web":
+        return f"J'ouvre {args.get('url', 'la page')}"
+    if name in ("click_web", "double_click_web"):
+        return f"Je clique sur {element}" if element else "Je clique"
+    if name in ("write_web", "type_web", "fill_web"):
+        return f"J'écris dans {element}" if element else "J'écris"
+    if name == "scroll_web":
+        return "Je fais défiler la page"
+    if name == "wait_web":
+        return "J'attends que la page se charge"
+    if name == "refresh_web":
+        return "Je recharge la page"
+    if name == "press_keys_web":
+        return f"J'appuie sur {'+'.join(args.get('keys') or [])}"
+    if name in ("go_back_web", "back_web"):
+        return "Je reviens à la page précédente"
+    return name.replace("_web", "").replace("_", " ")
+
+
 async def _maybe_await(value: Any) -> None:
     if inspect.isawaitable(value):
         await value
@@ -143,8 +169,10 @@ class DemarcheRunner:
                     kind = data.get("kind")
                     if kind == "policy_event":
                         content = (data.get("content") or "").strip()
-                        actions = [r.get("tool_name") for r in data.get("tool_reqs") or []]
-                        logger.debug("policy actions={}", actions)
+                        # Holo n'écrit souvent aucun message : on narre à partir des actions.
+                        content = content or "; ".join(
+                            filter(None, (describe_action(r) for r in data.get("tool_reqs") or []))
+                        )
                         if content:
                             await _maybe_await(on_step(Step(text=content, url=last_url, raw=data)))
                     elif kind == "observation_event":

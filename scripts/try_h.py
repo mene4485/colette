@@ -52,7 +52,19 @@ async def main() -> None:
 
     async def ask_user(question: str) -> str:
         print(f"\n❓ Agent : {question}", flush=True)
-        return await asyncio.to_thread(input, "↳ Ta réponse (Entrée = « c'est fait ») : ") or "C'est fait."
+        if sys.stdin.isatty():
+            return await asyncio.to_thread(input, "↳ Ta réponse (Entrée = « c'est fait ») : ") or "C'est fait."
+        # Mode non interactif : la réponse est déposée dans logs/answer.txt
+        answer_file = ROOT / "logs" / "answer.txt"
+        answer_file.unlink(missing_ok=True)
+        print(f"↳ En attente d'une réponse dans {answer_file}", flush=True)
+        while not answer_file.exists():
+            await asyncio.sleep(1)
+        await asyncio.sleep(0.2)
+        text = answer_file.read_text().strip()
+        answer_file.unlink(missing_ok=True)
+        print(f"↳ Réponse : {text}", flush=True)
+        return text or "C'est fait."
 
     loop = asyncio.get_running_loop()
     presses = {"n": 0}
