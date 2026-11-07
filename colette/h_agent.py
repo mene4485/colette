@@ -45,7 +45,10 @@ DEFAULT_INSTRUCTIONS = (
     "connexion apparaît, appelle l'outil ask_user et attends la réponse ; ne devine jamais. "
     "Ne tape jamais de mot de passe toi-même : demande à la personne de le taper. "
     "Ne clique jamais sur un bouton qui valide, paie, résilie ou envoie quelque chose sans "
-    "confirmation explicite obtenue via ask_user."
+    "confirmation explicite obtenue via ask_user. "
+    "Une bulle violette « Colette » (et son panneau) s'affiche en bas à droite de chaque page : "
+    "c'est ton interface avec la personne, elle ne fait pas partie du site. Ignore-la, ne clique "
+    "jamais dessus et ne la confonds pas avec le chat d'assistance du site."
 )
 
 

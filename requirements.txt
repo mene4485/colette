@@ -3,3 +3,6 @@ hai-agents[cli,browser]==1.4.3
 python-dotenv
 loguru
 httpx
+
+# Étape 2 — bulle injectée via CDP + serveur d'état WS
+websockets>=13.1
