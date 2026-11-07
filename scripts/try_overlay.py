@@ -50,8 +50,10 @@ H_GOAL = (
 class Scenario:
     """Lance / annule / met en pause une tâche de fond pilotée par les messages de la bulle."""
 
-    def __init__(self, server: StateServer) -> None:
+    def __init__(self, server: StateServer, once: bool = False) -> None:
         self.server = server
+        self.once = once  # --with-h : une seule session H par process (quota de 3)
+        self.started = False
         self.task: asyncio.Task | None = None
         self.resumed = asyncio.Event()
         self.resumed.set()
@@ -68,6 +70,10 @@ class Scenario:
     def start(self, coro_fn) -> None:
         if self.task and not self.task.done():
             return
+        if self.once and self.started:
+            logger.info("Session H déjà lancée une fois : relance le script pour un nouvel essai.")
+            return
+        self.started = True
         self.resumed.set()
         self.task = asyncio.create_task(coro_fn())
 
@@ -123,7 +129,17 @@ async def h_flow(sc: Scenario, runner) -> None:
         # Étape 2 : réponse au clavier (la voix arrive à l'étape 3).
         s.set_status("listening")
         print(f"\n❓ {question}", flush=True)
-        answer = await asyncio.to_thread(input, "↳ Réponse (Entrée = « c'est fait ») : ")
+        if sys.stdin.isatty():
+            answer = await asyncio.to_thread(input, "↳ Réponse (Entrée = « c'est fait ») : ")
+        else:  # non interactif : réponse déposée dans logs/answer.txt
+            answer_file = ROOT / "logs" / "answer.txt"
+            answer_file.unlink(missing_ok=True)
+            print(f"↳ En attente d'une réponse dans {answer_file}", flush=True)
+            while not answer_file.exists():
+                await asyncio.sleep(1)
+            await asyncio.sleep(0.2)
+            answer = answer_file.read_text().strip()
+            answer_file.unlink(missing_ok=True)
         s.set_status("working")
         return answer or "C'est fait."
 
@@ -152,7 +168,7 @@ async def main() -> None:
     injector = OverlayInjector(server)
     inject_task = asyncio.create_task(injector.run_forever())
 
-    sc = Scenario(server)
+    sc = Scenario(server, once=args.with_h)
     runner = None
     if args.with_h:
         from colette.h_agent import DemarcheRunner
@@ -193,8 +209,11 @@ async def main() -> None:
 
     logger.info("Arrêt…")
     if runner:
-        await runner.cancel()
-        await runner.aclose()
+        try:
+            await runner.cancel()
+            await runner.aclose()
+        except Exception as e:
+            logger.warning("Arrêt de la session H : {}", e)
     sc.cancel()
     inject_task.cancel()
     await server.stop()
