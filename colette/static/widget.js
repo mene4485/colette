@@ -15,6 +15,14 @@
   window.__colette = { version: 3 };
 
   var WS_URL = "ws://localhost:8765";
+  // Mode en ligne (maquette sur Vercel) : la page définit window.COLETTE_BACKEND (https://… du backend).
+  // Un seul WebSocket porte l'état, les boutons, le micro (PCM16 16 kHz) et la voix (PCM16 24 kHz).
+  var BACKEND = (window.COLETTE_BACKEND || "").replace(/\/+$/, "");
+  var HOSTED = !!BACKEND;
+  if (HOSTED) WS_URL = BACKEND.replace(/^http/, "ws") + "/ws";
+  var IN_RATE = 16000, OUT_RATE = 24000;
+  var audioCtx = null, micStream = null, micNode = null, playAt = 0, playing = [];
+  var shot = null, liveEl = null, busyServer = false;
   var PANEL_W = 440;  // largeur du panneau ; la page est rétrécie d'autant (rien n'est caché)
   var state = { open: false, status: "idle", steps: [], subtitle: "", confirm: null };
   var connected = false;
@@ -47,6 +55,21 @@
     ".mark{position:fixed;border:3px solid " + BLUE + ";border-radius:12px;pointer-events:none!important}",
     ".mark span{position:absolute;left:18px;bottom:calc(100% + 6px);background:" + BLUE + ";color:#fff;font-size:15px;font-weight:700;",
     "padding:6px 14px;border-radius:8px;white-space:nowrap;pointer-events:none!important}",
+    /* ---- mode en ligne : écran de l'agent H (captures du navigateur cloud) à gauche du panneau ---- */
+    ".live{position:fixed;left:0;top:0;bottom:0;right:" + PANEL_W + "px;background:#0F172A;display:none;flex-direction:column;",
+    "padding:14px 18px 12px;gap:10px;pointer-events:auto}",
+    ".livebar{display:flex;align-items:center;gap:10px;color:#fff;font-size:18px;font-weight:800}",
+    ".livebar i{width:11px;height:11px;border-radius:50%;background:#EF4444;animation:halo 1.6s ease-in-out infinite}",
+    ".livebox{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;",
+    "border-radius:12px;overflow:hidden;border:4px solid transparent;border-image:linear-gradient(90deg,#4F6BFF,#B66CE0 50%,#4F6BFF) 1}",
+    ".livebox img{max-width:100%;max-height:100%;object-fit:contain;background:#fff;display:block}",
+    ".livecur{position:absolute;width:36px;height:36px;border:3px solid #fff;border-radius:50%;background:rgba(33,85,211,.55);",
+    "box-shadow:0 0 0 4px rgba(33,85,211,.5);display:none;transition:left .4s,top .4s}",
+    ".livecur span{position:absolute;left:-4px;bottom:calc(100% + 8px);background:" + BLUE + ";color:#fff;font-size:15px;font-weight:700;",
+    "padding:6px 12px;border-radius:8px;white-space:nowrap}",
+    ".typebox{display:flex;gap:8px}.typebox input{flex:1;min-width:0;font:inherit;font-size:17px;padding:12px 14px;border:1.5px solid #D3D8E2;border-radius:12px}",
+    ".typebox button{font-size:16px;font-weight:800;padding:0 16px;border-radius:12px;border:2px solid " + BLUE + ";background:#fff;color:" + BLUE + "}",
+    ".liveurl{color:#CBD5E1;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
     /* ---- panneau latéral ---- */
     ".side{position:fixed;top:0;right:0;bottom:0;width:" + PANEL_W + "px;background:#fff;color:" + INK + ";",
     "border-left:1px solid " + LINE + ";display:flex;flex-direction:column;overflow:hidden}",
@@ -191,8 +214,128 @@
   function hasBinding() { return typeof window.__coletteSend === "function"; }
 
   function send(msg) {
+    if (HOSTED && /^(open|call|shortcut|resume)$/.test(msg.type)) startAudio();  // geste de la personne
     if (hasBinding()) window.__coletteSend(JSON.stringify(msg));
     else if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
+  }
+
+  // ---- audio (mode en ligne) ----
+  function startAudio() {
+    try {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        playAt = 0;
+      }
+      if (audioCtx.state === "suspended") audioCtx.resume();
+    } catch (e) { return; }
+    if (micStream || !navigator.mediaDevices) return;
+    micStream = "pending";
+    navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+      .then(function (stream) {
+        micStream = stream;
+        var src = audioCtx.createMediaStreamSource(stream);
+        micNode = audioCtx.createScriptProcessor(4096, 1, 1);
+        var ratio = audioCtx.sampleRate / IN_RATE;
+        micNode.onaudioprocess = function (ev) {
+          var input = ev.inputBuffer.getChannelData(0);
+          ev.outputBuffer.getChannelData(0).fill(0);
+          if (!ws || ws.readyState !== 1) return;
+          var n = Math.floor(input.length / ratio), out = new Int16Array(n);
+          for (var i = 0; i < n; i++) {
+            var start = Math.floor(i * ratio), end = Math.min(input.length, Math.floor((i + 1) * ratio)), sum = 0;
+            for (var j = start; j < end; j++) sum += input[j];
+            var v = sum / Math.max(1, end - start);
+            out[i] = v < 0 ? Math.max(-1, v) * 0x8000 : Math.min(1, v) * 0x7fff;
+          }
+          ws.send(out.buffer);
+        };
+        src.connect(micNode);
+        micNode.connect(audioCtx.destination);  // nécessaire pour que onaudioprocess tourne (sortie muette)
+      })
+      .catch(function () {
+        micStream = null;  // micro refusé : la zone de texte reste disponible
+        console.warn("Colette : micro refusé — autorisez-le dans la barre d'adresse, ou écrivez dans la zone de texte.");
+      });
+  }
+
+  function playPcm(buf) {
+    if (!audioCtx) return;
+    var pcm = new Int16Array(buf), n = pcm.length;
+    if (!n) return;
+    var b = audioCtx.createBuffer(1, n, OUT_RATE), ch = b.getChannelData(0);
+    for (var i = 0; i < n; i++) ch[i] = pcm[i] / 0x8000;
+    var src = audioCtx.createBufferSource();
+    src.buffer = b;
+    src.connect(audioCtx.destination);
+    var now = audioCtx.currentTime;
+    if (playAt < now + 0.03) playAt = now + 0.08;  // petit tampon anti-saccades
+    src.start(playAt);
+    playAt += b.duration;
+    playing.push(src);
+    src.onended = function () { var k = playing.indexOf(src); if (k >= 0) playing.splice(k, 1); };
+  }
+
+  function flushAudio() {
+    for (var i = 0; i < playing.length; i++) { try { playing[i].stop(); } catch (e) { /* ignore */ } }
+    playing = []; playAt = 0;
+  }
+
+  // ---- zone de texte (mode en ligne) : écrire à Colette au lieu de parler ----
+  var typeForm = null;
+  function typeBox() {
+    if (!typeForm) {
+      typeForm = el("form", "typebox");
+      var inp = el("input"); inp.type = "text"; inp.placeholder = "Ou écrivez ici (ex. « oui »)…";
+      inp.setAttribute("aria-label", "Écrire à Colette");
+      var b = el("button", null, "Envoyer"); b.type = "submit";
+      typeForm.appendChild(inp); typeForm.appendChild(b);
+      typeForm.onsubmit = function (ev) {
+        ev.preventDefault();
+        var v = inp.value.trim();
+        if (v) { send({ type: "text", text: v }); inp.value = ""; }
+      };
+    }
+    return typeForm;
+  }
+
+  // ---- écran de l'agent (mode en ligne) : captures du navigateur cloud de H ----
+  function renderLive() {
+    if (!HOSTED || !root) return;
+    var show = !!shot && state.open && (state.busy || !!state.confirm);
+    if (!liveEl) {
+      liveEl = el("div", "live");
+      var bar = el("div", "livebar");
+      bar.appendChild(el("i"));
+      bar.appendChild(el("span", null, "Écran de Colette : elle fait la démarche pour vous, en direct"));
+      liveEl.appendChild(bar);
+      var box = el("div", "livebox");
+      var img = el("img"); img.alt = "Ce que voit Colette";
+      box.appendChild(img);
+      var cur = el("div", "livecur"); cur.appendChild(el("span", null, "↓ Je clique ici"));
+      box.appendChild(cur);
+      liveEl.appendChild(box);
+      liveEl.appendChild(el("div", "liveurl"));
+      root.appendChild(liveEl);
+    }
+    liveEl.style.display = show ? "flex" : "none";
+    if (!show) return;
+    var im = liveEl.querySelector("img");
+    if (im.getAttribute("src") !== shot.image) im.setAttribute("src", shot.image);
+    liveEl.querySelector(".liveurl").textContent = shot.title || shot.url || "";
+    placeCursor();
+  }
+
+  function placeCursor() {
+    if (!liveEl || !shot) return;
+    var im = liveEl.querySelector("img"), cur = liveEl.querySelector(".livecur");
+    var c = shot.cursor, vp = shot.viewport;
+    if (!c || !vp || !vp[0] || (c[0] === 0 && c[1] === 0) || !im.naturalWidth) { cur.style.display = "none"; return; }
+    var box = im.parentNode.getBoundingClientRect(), r = im.getBoundingClientRect();
+    var k = Math.min(r.width / vp[0], r.height / vp[1]);
+    var w = vp[0] * k, h = vp[1] * k, ox = r.left + (r.width - w) / 2 - box.left, oy = r.top + (r.height - h) / 2 - box.top;
+    cur.style.display = "block";
+    cur.style.left = (ox + c[0] * k - 18) + "px";
+    cur.style.top = (oy + c[1] * k - 18) + "px";
   }
 
   function el(tag, cls, text) {
@@ -284,9 +427,11 @@
     var scr = screen();
     var shown = {}; for (var f in state) if (f !== "subtitle") shown[f] = state[f];  // sous-titres mot à mot : non affichés
     var key = JSON.stringify([shown, connected]);
+    renderLive();
     if (key === lastKey) return;  // rien n'a changé : pas de reconstruction
     lastKey = key;
     var wrap = root.getElementById("wrap");
+    var hadFocus = typeForm && root.activeElement === typeForm.firstChild;
     wrap.className = "wrap" + (scr === "working" ? " guard" : "");
     wrap.textContent = "";
     setPush(state.open);
@@ -354,7 +499,13 @@
     var foot = el("div", "foot");
     side.appendChild(body);
     ({ home: home, call: call, working: working, confirm: confirm, done: done, failed: failed })[scr](body, foot);
-    if (!connected) body.appendChild(el("div", "off", "Connexion à Colette perdue… je réessaie."));
+    if (HOSTED && (scr === "call" || scr === "working" || scr === "confirm")) {
+      foot.insertBefore(typeBox(), foot.firstChild);  // sans micro : on peut aussi écrire à Colette
+      if (hadFocus) typeForm.firstChild.focus();
+    }
+    if (!connected) body.appendChild(el("div", "off", busyServer
+      ? "Colette aide déjà d'autres personnes en ce moment. Réessayez dans quelques minutes."
+      : "Connexion à Colette perdue… je réessaie."));
     if (foot.childNodes.length) side.appendChild(foot);
   }
 
@@ -614,14 +765,23 @@
 
   function connect() {
     try { ws = new WebSocket(WS_URL); } catch (e) { setTimeout(connect, 1000); return; }
-    ws.onopen = function () { connected = true; render(); };
+    ws.binaryType = "arraybuffer";
+    ws.onopen = function () { connected = true; busyServer = false; render(); };
     ws.onmessage = function (ev) {
+      if (typeof ev.data !== "string") { playPcm(ev.data); return; }
       try {
         var msg = JSON.parse(ev.data);
-        if (msg.type === "state" && msg.state) { state = msg.state; render(); }
+        if (msg.type === "state" && msg.state) {
+          state = msg.state;
+          render();
+        } else if (msg.type === "screen") { shot = msg; renderLive(); }
+        else if (msg.type === "busy") { busyServer = true; }
       } catch (e) { /* ignore */ }
     };
-    ws.onclose = function () { connected = false; ws = null; render(); setTimeout(connect, 1000); };
+    ws.onclose = function () {
+      connected = false; ws = null; render();
+      setTimeout(connect, busyServer ? 15000 : (HOSTED ? 2000 : 1000));
+    };
     ws.onerror = function () { /* onclose suit */ };
   }
 
@@ -633,6 +793,7 @@
   // réinjectée dans la nouvelle page reprend là où elle en était (appel et démarche continuent).
 
   // Diagnostic : où atterrissent vraiment les clics (ceux de H inclus) ? + cadre « Je clique ici ».
+  window.addEventListener("resize", function () { placeCursor(); });
   window.addEventListener("mousedown", function (e) {
     var t = e.target, d = "";
     if (t === host) return;  // clic sur la bulle elle-même

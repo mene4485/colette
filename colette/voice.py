@@ -68,7 +68,6 @@ from pipecat.transcriptions.language import Language
 from pipecat.turns.user_mute import AlwaysUserMuteStrategy
 from pipecat.workers.runner import WorkerRunner
 
-from colette.audio_local import LocalAudioTransport, LocalAudioTransportParams
 from colette.h_agent import VALIDATE_STEP, Step, split_confirmation
 from colette.intents import is_login_done, is_login_question, is_noise, parse_intent
 from colette import site
@@ -307,8 +306,11 @@ class ColetteVoice:
     """Assemble le pipeline et relie voix ⇄ bulle (StateServer) ⇄ agent H (runner)."""
 
     def __init__(self, state: StateServer, runner, *, script: Optional[list[str]] = None,
-                 auto_open: bool = False) -> None:
+                 auto_open: bool = False, transport=None, pipeline_params: Optional[dict] = None) -> None:
         self.state = state
+        # None : micro/HP du laptop (démo locale) ; sinon transport fourni (mode en ligne : WebSocket)
+        self._transport = transport
+        self._pipeline_params = pipeline_params or {}
         self.runner = runner
         self.script = list(script or [])
         self.auto_open = auto_open
@@ -386,7 +388,11 @@ class ColetteVoice:
 
     # ---- construction du pipeline ------------------------------------------
     def build(self) -> PipelineWorker:
-        transport = LocalAudioTransport(LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True))
+        transport = self._transport
+        if transport is None:  # import ici : sounddevice/PortAudio absent du serveur en ligne
+            from colette.audio_local import LocalAudioTransport, LocalAudioTransportParams
+
+            transport = LocalAudioTransport(LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True))
 
         stt = GladiaSTTService(
             api_key=os.environ["GLADIA_API_KEY"],
@@ -450,7 +456,7 @@ class ColetteVoice:
         ])
         self.worker = PipelineWorker(
             pipeline,
-            params=PipelineParams(enable_metrics=True),
+            params=PipelineParams(enable_metrics=True, **self._pipeline_params),
             idle_timeout_secs=None,
         )
 
@@ -500,8 +506,24 @@ class ColetteVoice:
         await self.say(GREETING, to_context=True)
 
     # ---- messages de la bulle (et commandes vocales, même chemin) ------------
+    async def type_text(self, text: str) -> None:
+        """Phrase écrite dans la bulle (mode en ligne, sans micro) : même chemin qu'une phrase dite."""
+        text = " ".join((text or "").split())[:500]
+        if not text:
+            return
+        logger.info("⌨️  {}", text)
+        self.on_user_final(text)
+        if self.gate.route(text):
+            return
+        if self.worker is not None:
+            await self.worker.queue_frame(
+                LLMMessagesAppendFrame(messages=[{"role": "user", "content": text}], run_llm=True))
+
     async def on_client_message(self, msg: dict) -> None:
         t = msg.get("type")
+        if t == "text":
+            await self.type_text(str(msg.get("text") or ""))
+            return
         running = self._demarche_task is not None and not self._demarche_task.done()
         if t == "call":
             if self._started.is_set():

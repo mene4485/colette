@@ -563,3 +563,99 @@ def start_in_thread(port: int = DEFAULT_PORT, cookie_banner: bool = True) -> tup
     server = make_server(port, cookie_banner=cookie_banner)
     threading.Thread(target=server.serve_forever, name="demo-site", daemon=True).start()
     return server, f"http://localhost:{port}/account/"
+
+
+# ---- version en ligne (Vercel) : état du compte dans un cookie signé, un compte par visiteur ----
+import base64  # noqa: E402
+import os  # noqa: E402
+
+WIDGET_PATH = ROOT / "colette" / "static" / "widget.js"
+STATE_COOKIE = "fm_acct"
+AGENT_COOKIE = "colette_agent"  # navigateur de l'agent H (cloud) : pas de bulle Colette dedans
+
+
+class CookieStore:
+    """Même interface que Store, mais l'état vit dans un cookie signé (serverless, sans disque)."""
+
+    def __init__(self, cookies: SimpleCookie) -> None:
+        self.lock = threading.Lock()
+        self.secret = os.getenv("COLETTE_DEMO_SECRET", "colette-demo-secret")
+        self.dirty = False
+        self.data = {"account": self._load(cookies.get(STATE_COOKIE))}
+
+    def _sign(self, raw: bytes) -> str:
+        return hmac.new(self.secret.encode(), raw, hashlib.sha256).hexdigest()[:32]
+
+    def _load(self, morsel) -> dict:
+        if morsel is not None:
+            try:
+                payload, sig = morsel.value.rsplit(".", 1)
+                raw = base64.urlsafe_b64decode(payload.encode())
+                if hmac.compare_digest(sig, self._sign(raw)):
+                    acct = json.loads(raw)
+                    return {**copy.deepcopy(DEFAULT_ACCOUNT), **acct}
+            except Exception:
+                pass
+        return copy.deepcopy(DEFAULT_ACCOUNT)
+
+    @property
+    def account(self) -> dict:
+        return self.data["account"]
+
+    def token(self) -> str:
+        return hmac.new(self.secret.encode(), DEMO_LOGIN.encode(), hashlib.sha256).hexdigest()
+
+    def log(self, what: str) -> None:
+        h = self.account.setdefault("history", [])
+        h.append({"at": dt.datetime.now().isoformat(timespec="seconds"), "what": what})
+        del h[:-5]
+
+    def save(self) -> None:
+        self.dirty = True
+
+    def reset(self) -> None:
+        self.data["account"] = copy.deepcopy(DEFAULT_ACCOUNT)
+        self.dirty = True
+
+    def cookie(self) -> str:
+        raw = json.dumps(self.account, ensure_ascii=False, separators=(",", ":")).encode()
+        value = base64.urlsafe_b64encode(raw).decode() + "." + self._sign(raw)
+        return f"{STATE_COOKIE}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400"
+
+
+class CloudHandler(Handler):
+    """Maquette servie sans disque (Vercel). Avec COLETTE_BACKEND_URL, chaque page charge la bulle
+    Colette (widget.js) reliée au backend hébergé (voix + agent H en navigateur cloud)."""
+
+    def _prepare(self) -> None:
+        self.store = CookieStore(self._cookies())  # type: ignore[assignment]
+        self._agent = "agent=1" in (urlparse(self.path).query or "") or AGENT_COOKIE in self._cookies()
+
+    def do_GET(self):
+        self._prepare()
+        path = urlparse(self.path).path
+        if path == "/colette/widget.js":
+            return self._send(WIDGET_PATH.read_bytes(), 200, "application/javascript; charset=utf-8")
+        if path == "/healthz":
+            return self._send("ok", 200, "text/plain; charset=utf-8")
+        return super().do_GET()
+
+    def do_POST(self):
+        self._prepare()
+        return super().do_POST()
+
+    def end_headers(self):
+        store = getattr(self, "store", None)
+        if isinstance(store, CookieStore) and store.dirty:
+            self.send_header("Set-Cookie", store.cookie())
+        if "agent=1" in (urlparse(self.path).query or ""):
+            self.send_header("Set-Cookie", f"{AGENT_COOKIE}=1; Path=/; SameSite=Lax")
+        super().end_headers()
+
+    def _page(self, html_text: str, status: int = 200) -> None:
+        backend = os.getenv("COLETTE_BACKEND_URL", "").strip().rstrip("/")
+        if backend and not getattr(self, "_agent", False):
+            tag = (f'<script>window.COLETTE_BACKEND={json.dumps(backend)};</script>'
+                   '<script src="/colette/widget.js" defer></script>')
+            html_text = html_text.replace("</body>", tag + "</body>")
+        super()._page(html_text, status)

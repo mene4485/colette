@@ -1,0 +1,12 @@
+# Backend en ligne (colette/hosted.py) : pas de micro local ni de Chrome local.
+hai-agents==1.4.3
+pipecat-ai[gladia,cartesia,openrouter,silero]==1.15.*
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-dotenv
+loguru
+httpx
+websockets>=13.1
+certifi
+pillow
+openai

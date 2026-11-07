@@ -12,3 +12,4 @@ websockets>=13.1
 # (colette/audio_local.py, PortAudio embarqué).
 pipecat-ai[gladia,cartesia,openrouter,silero]==1.15.*
 sounddevice
+fastapi>=0.115

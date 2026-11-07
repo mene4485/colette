@@ -1,0 +1,8 @@
+.venv
+.git
+logs
+docs
+demo_data
+**/__pycache__
+.env
+colette/.env

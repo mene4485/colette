@@ -1,0 +1,11 @@
+# Vercel ne sert que la maquette : api/index.py + colette/demo_site.py + widget.js
+# (sans requirements.txt, rien n'est installé : la maquette n'utilise que la bibliothèque standard)
+*
+!api
+!api/index.py
+!colette
+!colette/__init__.py
+!colette/demo_site.py
+!colette/static
+!colette/static/widget.js
+!vercel.json
