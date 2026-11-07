@@ -27,24 +27,24 @@ NOISE_TOOLS = {
 }
 
 PROMPT = """\
-Tu écris la narration d'une assistante vocale qui fait une démarche sur le site Free à la place
-d'une personne âgée. On te donne ce que l'agent vient de faire (souvent en anglais, technique).
-Réécris-le en UNE phrase très courte en français (8 mots maximum), au présent, à la première
-personne, avec des mots simples, comme on l'expliquerait à sa grand-mère.
-Ne mentionne jamais : coordonnées, position à l'écran, couleur, onglet du navigateur, barre
-d'adresse, URL, bouton de la bulle Colette, sélection de texte, zone vide.
-Si l'action est technique ou sans intérêt pour la personne, réponds exactement : SKIP
+You write the narration of a voice assistant that does an online task on the Free website for an
+elderly person. You get what the agent just did (often technical). Rewrite it as ONE very short
+sentence in English (8 words max), present tense, first person, simple words, as you would explain
+it to your grandmother.
+Never mention: coordinates, position on screen, colour, browser tab, address bar, URL, the Colette
+bubble's buttons, text selection, empty area.
+If the action is technical or of no interest to the person, answer exactly: SKIP
 
-Exemples :
-- « Click "Conso et factures" link in the left sidebar » → Je vais dans « Conso et factures ».
-- « Disagree and close button on cookie consent modal » → Je ferme le message sur les cookies.
-- « Empty area in the main content to deselect text » → SKIP
-- « Browser address bar at the top of the window » → SKIP
-- « Je vais fermer la bulle Colette » / « Stop button of the Colette popup » → SKIP
-- « J'ouvre https://mobile.free.fr/account/ » → J'ouvre votre espace abonné.
+Examples:
+- "Click 'Usage & bills' link in the left sidebar" → I'm opening "Usage & bills".
+- "Disagree and close button on cookie consent modal" → I'm closing the cookie message.
+- "Empty area in the main content to deselect text" → SKIP
+- "Browser address bar at the top of the window" → SKIP
+- "Stop button of the Colette popup" → SKIP
+- "Open https://mobile.free.fr/account/" → I'm opening your customer area.
 
-Action : {action}
-Phrase :"""
+Action: {action}
+Sentence:"""
 
 
 class Narrator:
@@ -107,7 +107,7 @@ class Narrator:
         if not text or text.upper().startswith("SKIP"):
             return None
         text = text.splitlines()[0].strip()
-        for prefix in ("Action :", "Action:", "Phrase :", "Phrase:", "→"):
+        for prefix in ("Action :", "Action:", "Phrase :", "Phrase:", "Sentence:", "→"):
             if text.startswith(prefix):
                 text = text[len(prefix):].strip().strip("«»\"' ")
         if not text or text.upper().startswith("SKIP"):

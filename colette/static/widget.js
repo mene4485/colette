@@ -259,7 +259,7 @@
       })
       .catch(function () {
         micStream = null;  // micro refusé : la zone de texte reste disponible
-        console.warn("Colette : micro refusé — autorisez-le dans la barre d'adresse, ou écrivez dans la zone de texte.");
+        console.warn("Colette: microphone blocked. Allow it in the address bar, or type in the text box.");
       });
   }
 
@@ -324,9 +324,9 @@
   function typeBox() {
     if (!typeForm) {
       typeForm = el("form", "typebox");
-      var inp = el("input"); inp.type = "text"; inp.placeholder = "Ou écrivez ici (ex. « oui »)…";
-      inp.setAttribute("aria-label", "Écrire à Colette");
-      var b = el("button", null, "Envoyer"); b.type = "submit";
+      var inp = el("input"); inp.type = "text"; inp.placeholder = "Or type here (e.g. \"yes\")…";
+      inp.setAttribute("aria-label", "Write to Colette");
+      var b = el("button", null, "Send"); b.type = "submit";
       typeForm.appendChild(inp); typeForm.appendChild(b);
       typeForm.onsubmit = function (ev) {
         ev.preventDefault();
@@ -436,16 +436,16 @@
   var hlBox = null, hlTarget = null, hlTimer = null;
   function highlightDownload() {
     var said = ((state.outcome && state.outcome.text) || "") + " " + lastColette();
-    if (state.busy || !/t[ée]l[ée]charg/i.test(said)) return;
+    if (state.busy || (!/^\/account\/factures/.test(location.pathname) && !/download|t[ée]l[ée]charg/i.test(said))) return;
     var links = document.querySelectorAll("a,button");
     hlTarget = null;
     for (var i = 0; i < links.length; i++) {
-      if (/t[ée]l[ée]charger/i.test(links[i].textContent || "")) { hlTarget = links[i]; break; }
+      if (/download|t[ée]l[ée]charger/i.test(links[i].textContent || "")) { hlTarget = links[i]; break; }
     }
     if (!hlTarget || !root) return;
     if (!hlBox) {
       hlBox = el("div", "mark hl");
-      hlBox.appendChild(el("span", null, "↓ Cliquez ici pour télécharger"));
+      hlBox.appendChild(el("span", null, "↓ Click here to download"));
       root.appendChild(hlBox);
     }
     try { hlTarget.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { /* ignore */ }
@@ -468,12 +468,12 @@
       liveEl = el("div", "live");
       var bar = el("div", "livebar");
       bar.appendChild(el("i"));
-      bar.appendChild(el("span", null, "Écran de Colette : elle fait la démarche pour vous, en direct"));
+      bar.appendChild(el("span", null, "Colette's screen: she's doing it for you, live"));
       liveEl.appendChild(bar);
       var box = el("div", "livebox");
-      var img = el("img"); img.alt = "Ce que voit Colette";
+      var img = el("img"); img.alt = "What Colette sees";
       box.appendChild(img);
-      var cur = el("div", "livecur"); cur.appendChild(el("span", null, "↓ Je clique ici"));
+      var cur = el("div", "livecur"); cur.appendChild(el("span", null, "↓ I'm clicking here"));
       box.appendChild(cur);
       liveEl.appendChild(box);
       liveEl.appendChild(el("div", "liveurl"));
@@ -549,7 +549,7 @@
 
   function build() {
     host = document.createElement("colette-widget");
-    host.setAttribute("aria-label", "Colette (assistant) — à ignorer");
+    host.setAttribute("aria-label", "Colette (assistant) — ignore");
     host.setAttribute("data-colette", "1");
     root = host.attachShadow({ mode: "open" });
     var style = el("style"); style.textContent = CSS; root.appendChild(style);
@@ -575,13 +575,13 @@
   }
 
   function statusFor(scr) {
-    if (state.status === "paused" && (scr === "call" || scr === "working")) return ["amber", "En pause"];
-    if (scr === "call") return state.status === "speaking" ? ["blue", "Colette vous parle…"] : ["blue", "Je vous écoute…"];
-    if (scr === "working") return state.status === "listening" ? ["blue", "Je vous écoute…"] : ["blue", "Je navigue pour vous"];
-    if (scr === "confirm") return ["amber", "Attend votre accord"];
-    if (scr === "failed") return ["amber", "Colette a besoin d'aide"];
-    if (scr === "done") return state.outcome && state.outcome.kind !== "success" ? ["blue", "Démarche arrêtée"] : ["green", "Terminé"];
-    return ["green", "Disponible"];
+    if (state.status === "paused" && (scr === "call" || scr === "working")) return ["amber", "Paused"];
+    if (scr === "call") return state.status === "speaking" ? ["blue", "Colette is speaking…"] : ["blue", "I'm listening…"];
+    if (scr === "working") return state.status === "listening" ? ["blue", "I'm listening…"] : ["blue", "I'm browsing for you"];
+    if (scr === "confirm") return ["amber", "Waiting for your approval"];
+    if (scr === "failed") return ["amber", "Colette needs help"];
+    if (scr === "done") return state.outcome && state.outcome.kind !== "success" ? ["blue", "Task stopped"] : ["green", "Done"];
+    return ["green", "Available"];
   }
 
   function render() {
@@ -601,11 +601,11 @@
 
     if (scr === "closed") {
       var pill = el("button", "pill" + (state.call || state.busy ? " live" : ""));
-      pill.setAttribute("aria-label", "Parler à Colette");
+      pill.setAttribute("aria-label", "Talk to Colette");
       pill.appendChild(avatar());
       var t = el("span");
-      t.appendChild(el("b", null, "Parler à Colette"));
-      t.appendChild(el("small", null, state.busy ? "Je travaille pour vous" : "Votre assistante"));
+      t.appendChild(el("b", null, "Talk to Colette"));
+      t.appendChild(el("small", null, state.busy ? "Working for you" : "Your assistant"));
       pill.appendChild(t);
       pill.onclick = function () { state.open = true; render(); send({ type: "open" }); };
       wrap.appendChild(pill);
@@ -623,7 +623,7 @@
 
     var top = el("div", "top");
     top.appendChild(el("span", null, "Colette"));
-    if (scr !== "working") { var tx = el("button"); tx.setAttribute("aria-label", "Fermer"); tx.appendChild(svg("x")); tx.onclick = closeFn; top.appendChild(tx); }
+    if (scr !== "working") { var tx = el("button"); tx.setAttribute("aria-label", "Close"); tx.appendChild(svg("x")); tx.onclick = closeFn; top.appendChild(tx); }
     side.appendChild(top);
 
     var head = el("div", "head");
@@ -638,9 +638,9 @@
     head.appendChild(who);
     if (scr !== "working") {  // pas de fermeture pendant que H agit
       var x = el("button", "x");
-      x.setAttribute("aria-label", "Fermer");
+      x.setAttribute("aria-label", "Close");
       x.appendChild(svg("x"));
-      x.appendChild(el("span", null, "Fermer"));
+      x.appendChild(el("span", null, "Close"));
       x.onclick = closeFn;
       head.appendChild(x);
     }
@@ -651,7 +651,7 @@
       var live = state.call || state.busy, paused = state.status === "paused";
       var cb = el("div", "callbar" + (!live ? " ended" : paused ? " paused" : ""));
       var l = el("span"); l.appendChild(el("i"));
-      l.appendChild(document.createTextNode(!live ? "Appel terminé · micro coupé" : paused ? "En pause · micro coupé" : "Appel en cours · micro allumé"));
+      l.appendChild(document.createTextNode(!live ? "Call ended · mic off" : paused ? "Paused · mic off" : "Call in progress · mic on"));
       cb.appendChild(l);
       side.appendChild(cb);
     }
@@ -663,7 +663,7 @@
     if (HOSTED && state.login_handoff && body.firstChild) {
       var hb = el("div", "hintbox");
       hb.appendChild(svg("lock"));
-      hb.appendChild(el("span", null, "Connectez-vous vous-même sur la page, à gauche. Colette ne voit pas ce que vous tapez."));
+      hb.appendChild(el("span", null, "Log in yourself on the page, on the left. Colette can't see what you type."));
       body.insertBefore(hb, body.firstChild);
     }
     if (HOSTED && (scr === "call" || scr === "working" || scr === "confirm")) {
@@ -671,25 +671,25 @@
       if (hadFocus) typeForm.firstChild.focus();
     }
     if (!connected) body.appendChild(el("div", "off", busyServer
-      ? "Colette aide déjà d'autres personnes en ce moment. Réessayez dans quelques minutes."
-      : "Connexion à Colette perdue… je réessaie."));
+      ? "Colette is already helping other people right now. Please try again in a few minutes."
+      : "Lost connection to Colette… trying again."));
     if (foot.childNodes.length) side.appendChild(foot);
   }
 
   // ---- 02 · ouverte ----
   function home(body) {
-    body.appendChild(el("h2", null, "Bonjour, je suis Colette."));
-    body.appendChild(el("p", "lead", "Dites-moi simplement ce que vous voulez faire."));
+    body.appendChild(el("h2", null, "Hello, I'm Colette."));
+    body.appendChild(el("p", "lead", "Just tell me what you'd like to do."));
     var talk = el("button", "talk");
     var halo = el("span", "halo"), disc = el("span", "disc");
     disc.appendChild(svg("mic")); halo.appendChild(disc); talk.appendChild(halo);
-    talk.appendChild(el("b", null, "Appuyer pour parler"));
+    talk.appendChild(el("b", null, "Tap to talk"));
     talk.onclick = function () { state.call = true; render(); send({ type: "call" }); };
     body.appendChild(talk);
     var shortcuts = state.shortcuts || [];
     if (shortcuts.length) {
       body.appendChild(el("div", "sep"));
-      body.appendChild(el("div", "or", "Ou choisissez directement :"));
+      body.appendChild(el("div", "or", "Or choose directly:"));
       var grid = el("div", "grid");
       shortcuts.forEach(function (s) {
         var c = el("button", "chip", s.label);
@@ -710,7 +710,7 @@
     var prev = null;
     msgs.forEach(function (m, i) {
       var me = m.who === "vous";
-      if (m.who !== prev) chat.appendChild(el("div", "who2" + (me ? " me" : ""), me ? "Vous" : "Colette"));
+      if (m.who !== prev) chat.appendChild(el("div", "who2" + (me ? " me" : ""), me ? "You" : "Colette"));
       prev = m.who;
       var b = el("div", "msg" + (me ? " me" : "") + (i === msgs.length - 1 ? " now" : ""), m.text);
       if (m.live) b.appendChild(el("span", "caret"));
@@ -720,24 +720,24 @@
     var last = msgs[msgs.length - 1];
     var lis = el("div", "listen" + (paused ? " grey" : speaking ? " blue" : ""));
     lis.appendChild(wave(paused));
-    lis.appendChild(el("div", null, paused ? "En pause — je n'écoute plus." : speaking ? "Colette vous parle…" : "Je vous écoute… prenez votre temps."));
+    lis.appendChild(el("div", null, paused ? "Paused — I'm not listening." : speaking ? "Colette is speaking…" : "I'm listening… take your time."));
     body.appendChild(lis);
     var row = el("div", "row2");
-    row.appendChild(button("sec", paused ? "Reprendre" : "Pause", function () { send({ type: paused ? "resume" : "pause" }); }));
-    row.appendChild(button("dark", "Arrêter l'appel", function () { state.call = false; render(); send({ type: "hangup" }); }));
+    row.appendChild(button("sec", paused ? "Resume" : "Pause", function () { send({ type: paused ? "resume" : "pause" }); }));
+    row.appendChild(button("dark", "End call", function () { state.call = false; render(); send({ type: "hangup" }); }));
     foot.appendChild(row);
   }
 
   // ---- 05 · navigue (H agit) ----
   function working(body, foot) {
     var steps = state.steps || [];
-    body.appendChild(el("h2", null, state.title || "Je m'occupe de votre demande"));
+    body.appendChild(el("h2", null, state.title || "I'm taking care of your request"));
     if (steps.length) {
       var cur = 0;
       steps.forEach(function (s, i) { if (s.state === "doing") cur = i + 1; });
       var doneN = steps.filter(function (s) { return s.state === "done"; }).length;
       if (!cur) cur = Math.min(doneN + 1, steps.length);
-      body.appendChild(el("div", "count", "Étape " + cur + " sur " + steps.length));
+      body.appendChild(el("div", "count", "Step " + cur + " of " + steps.length));
       var segs = el("div", "segs");
       steps.forEach(function (s, i) { segs.appendChild(el("i", i < cur ? "on" : null)); });
       body.appendChild(segs);
@@ -749,30 +749,30 @@
         if (s.state === "done") d.appendChild(svg("check"));
         li.appendChild(d);
         li.appendChild(el("span", "lbl", s.label));
-        li.appendChild(el("small", null, s.state === "done" ? "Fait" : s.state === "doing" ? "En cours" : "À venir"));
+        li.appendChild(el("small", null, s.state === "done" ? "Done" : s.state === "doing" ? "In progress" : "Up next"));
         ul.appendChild(li);
       });
       body.appendChild(ul);
     }
     var said = lastColette();
     var says = el("div", "says");
-    says.appendChild(el("b", null, "Colette dit : "));
-    says.appendChild(document.createTextNode(state.status === "paused" ? "Je suis en pause. Vous avez la main."
-      : said || "Vous n'avez rien à faire. Je vous préviens si j'ai besoin de vous."));
+    says.appendChild(el("b", null, "Colette says: "));
+    says.appendChild(document.createTextNode(state.status === "paused" ? "I'm paused. You're in control."
+      : said || "You don't need to do anything. I'll let you know if I need you."));
     body.appendChild(says);
     var paused = state.status === "paused";
     var row = el("div", "row2");
     // .hold : seuls boutons cliquables pendant que H agit (simple clic).
-    row.appendChild(button("sec hold", paused ? "Reprendre" : "Pause", function () { send({ type: paused ? "resume" : "pause" }); }));
-    row.appendChild(button("dark hold", "Arrêter", function () { send({ type: "stop" }); }));
+    row.appendChild(button("sec hold", paused ? "Resume" : "Pause", function () { send({ type: paused ? "resume" : "pause" }); }));
+    row.appendChild(button("dark hold", "Stop", function () { send({ type: "stop" }); }));
     foot.appendChild(row);
   }
 
   // ---- 06 · votre accord ----
   function confirm(body, foot) {
     var c = state.confirm || {};
-    body.appendChild(el("div", "tag", "À vous"));
-    body.appendChild(el("h2", null, c.title || c.text || "Je valide ?"));
+    body.appendChild(el("div", "tag", "Your turn"));
+    body.appendChild(el("h2", null, c.title || c.text || "Shall I go ahead?"));
     var pts = c.bullets || [];
     if (pts.length) {
       var ul = el("ul", "pts");
@@ -780,10 +780,10 @@
       body.appendChild(ul);
     }
     var a = el("div", "ambre"); a.appendChild(svg("mic"));
-    a.appendChild(el("span", null, "Dites « oui » ou touchez le bouton. Rien ne change sans votre accord."));
+    a.appendChild(el("span", null, "Say \"yes\" or tap the button. Nothing changes without your approval."));
     body.appendChild(a);
-    foot.appendChild(button("", c.yes || "Oui, je suis d'accord", function () { send({ type: "confirm", value: true }); }));
-    foot.appendChild(button("sec", c.no || "Non, ne rien changer", function () { send({ type: "confirm", value: false }); }));
+    foot.appendChild(button("", c.yes || "Yes, I agree", function () { send({ type: "confirm", value: true }); }));
+    foot.appendChild(button("sec", c.no || "No, don't change anything", function () { send({ type: "confirm", value: false }); }));
   }
 
   // ---- 07 · c'est fait (ou arrêté / refusé) ----
@@ -793,28 +793,28 @@
     var b = el("div", "badge " + (ok ? "ok" : "info"));
     b.appendChild(svg(ok ? "tick" : "info"));
     body.appendChild(b);
-    body.appendChild(el("h2", "big1", o.title || (ok ? "C'est fait !" : "Rien n'a été changé")));
+    body.appendChild(el("h2", "big1", o.title || (ok ? "All done!" : "Nothing was changed")));
     if (o.text) { var p = el("p", null, o.text); p.style.marginTop = "14px"; body.appendChild(p); }
     if (!ok && o.nothing_changed) body.appendChild(okPill());
     var items = o.summary || [];
     if (items.length) {
       var box = el("div", "box");
-      box.appendChild(el("h3", null, "Ce que j'ai fait pour vous"));
+      box.appendChild(el("h3", null, "What I did for you"));
       var ol = el("ol");
       items.forEach(function (s) { ol.appendChild(el("li", null, s)); });
       box.appendChild(ol);
       body.appendChild(box);
     }
     var row = el("div", "row2");
-    row.appendChild(button("sec", "Nouvelle demande", newSession));
-    row.appendChild(button("dark", "Terminer l'appel", function () { state.open = false; render(); send({ type: "later" }); }));
+    row.appendChild(button("sec", "New request", newSession));
+    row.appendChild(button("dark", "End call", function () { state.open = false; render(); send({ type: "later" }); }));
     foot.appendChild(row);
   }
 
   function okPill() {
     var g = el("div", "okpill");
     g.appendChild(svg("shield"));
-    g.appendChild(el("span", null, "Rien n'a été modifié sur votre compte."));
+    g.appendChild(el("span", null, "Nothing was changed on your account."));
     return g;
   }
 
@@ -822,17 +822,17 @@
   function failed(body, foot) {
     var o = state.outcome || {};
     var b = el("div", "badge warn"); b.appendChild(svg("warn")); body.appendChild(b);
-    body.appendChild(el("h2", null, o.title || "Je n'ai pas pu terminer"));
-    var p = el("p", null, (o.text || "Le site ne répond pas comme prévu.") + " Ce n'est pas de votre faute.");
+    body.appendChild(el("h2", null, o.title || "I couldn't finish"));
+    var p = el("p", null, (o.text || "The website isn't responding as expected.") + " It's not your fault.");
     p.style.marginTop = "12px";
     body.appendChild(p);
     if (o.nothing_changed) body.appendChild(okPill());
-    body.appendChild(el("div", "q", "Que voulez-vous faire ?"));
+    body.appendChild(el("div", "q", "What would you like to do?"));
     var rows = el("div", "rows");
-    rows.appendChild(rowButton("Parler à un conseiller", function () { send({ type: "advisor" }); }));
-    rows.appendChild(rowButton("Réessayer une fois", function () { send({ type: "retry" }); }));
+    rows.appendChild(rowButton("Talk to an advisor", function () { send({ type: "advisor" }); }));
+    rows.appendChild(rowButton("Try once more", function () { send({ type: "retry" }); }));
     body.appendChild(rows);
-    foot.appendChild(button("sec", "Laisser pour plus tard", function () { state.open = false; render(); send({ type: "later" }); }));
+    foot.appendChild(button("sec", "Leave it for later", function () { state.open = false; render(); send({ type: "later" }); }));
   }
 
   // ---- La page se pousse à gauche pour faire place au panneau : rien n'est caché dessous ----
@@ -901,7 +901,7 @@
     markTarget = target;
     if (!markBox) {
       markBox = el("div", "mark");
-      markBox.appendChild(el("span", null, "↓ Je clique ici"));
+      markBox.appendChild(el("span", null, "↓ I'm clicking here"));
     }
     if (!markTimer) markTimer = setInterval(updateMark, 300);
     updateMark();

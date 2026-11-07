@@ -1,10 +1,10 @@
 ---
 name: free-bill
 description: Use when the person wants to see or download their latest Free Mobile bill (facture) from the Free Mobile customer area.
-label: Ma facture
-ask: Je voudrais télécharger ma dernière facture.
-keywords: facture | factures | pdf
-steps: Ouvrir votre espace abonné | Vous connecter | Trouver vos factures | Télécharger la dernière facture
+label: My bill
+ask: I'd like to download my latest bill.
+keywords: bill | bills | invoice | pdf | facture
+steps: Open your customer area | Log in | Find your bills | Download the latest bill
 order: 1
 ---
 # Download the most recent Free Mobile bill
@@ -16,8 +16,8 @@ order: 1
 ## Steps
 1. If a cookie banner appears, choose the option that refuses cookies or continues without accepting
    ("Refuser", "Continuer sans accepter", "Reject all").
-2. Si une connexion, un mot de passe ou un code SMS est demandé, appelle `ask_user` pour que la
-   personne le tape elle-même, puis attends. Never type an identifier, password or code yourself.
+2. If a login, a password or a text-message code is requested, call `ask_user` so the
+   person types it herself, then wait. Never type an identifier, password or code yourself.
 3. Find the list of bills:
    - on the home page (Accueil), under "Suivi de consommation", or
    - in the menu "MON FORFAIT MOBILE" → "Conso et factures".

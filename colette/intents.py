@@ -34,27 +34,38 @@ def _has(norm: str, phrases: tuple[str, ...]) -> bool:
 
 # Expressions déjà normalisées (sans accents, apostrophes → espace).
 STOP = ("stop", "stoppe", "stoppez", "arrete", "arretez", "arrete tout", "arretez tout",
-        "annule tout", "annulez tout", "laisse tomber", "laissez tomber")
+        "annule tout", "annulez tout", "laisse tomber", "laissez tomber",
+        "stop it", "stop everything", "cancel everything", "forget it", "never mind", "abort")
 # « Taisez-vous » : Colette se tait tout de suite (l'appel continue).
 HUSH = ("arretez de parler", "arrete de parler", "arreter de parler", "arretez de me parler", "taisez vous",
-        "tais toi", "chut", "silence", "ca suffit", "plus un mot", "fermez la", "stop parle")
+        "tais toi", "chut", "silence", "ca suffit", "plus un mot", "fermez la", "stop parle",
+        "stop talking", "be quiet", "quiet please", "shut up", "hush", "that s enough", "enough")
 # « Quittez l'appel » : silence immédiat et fin de l'appel (« quittez la pelle » : erreur STT fréquente).
 HANGUP = ("quittez l appel", "quitte l appel", "quitter l appel", "quittez la pelle", "quitter la pelle",
           "raccrochez", "raccroche", "raccrocher", "au revoir", "fin de l appel", "terminez l appel",
           "termine l appel", "terminer l appel", "arretez l appel", "arrete l appel", "coupez l appel",
-          "on raccroche")
+          "on raccroche",
+          "end the call", "end call", "hang up", "goodbye", "bye bye", "finish the call", "stop the call")
 PAUSE = ("pause", "attends", "attendez", "attend", "je reprends la main", "je prends la main",
-         "une seconde", "une minute", "deux secondes", "un instant", "minute")
+         "une seconde", "une minute", "deux secondes", "un instant", "minute",
+         "wait", "hold on", "hang on", "one second", "one moment", "just a moment", "just a second", "a minute")
 RESUME = ("continue", "continuez", "reprends", "reprenez", "c est bon", "vas y", "allez y",
-          "on continue", "tu peux continuer", "vous pouvez continuer", "go")
+          "on continue", "tu peux continuer", "vous pouvez continuer", "go",
+          "go on", "carry on", "keep going", "resume", "go ahead", "you can continue", "done")
 YES = ("oui", "ouais", "d accord", "ok", "okay", "vas y", "allez y", "je confirme", "confirme",
        "confirmez", "c est bon", "validez", "valide", "valider", "bien sur", "exactement",
-       "parfait", "tout a fait", "absolument", "allez")
+       "parfait", "tout a fait", "absolument", "allez",
+       "yes", "yeah", "yep", "yup", "sure", "of course", "i agree", "agreed", "confirm", "i confirm",
+       "go ahead", "that s right", "correct", "exactly", "absolutely", "perfect", "please do", "do it",
+       "alright", "all right", "right", "fine")
 NO = ("non", "surtout pas", "annule", "annulez", "n en fais rien", "n en faites rien",
-      "ne valide pas", "ne validez pas", "pas du tout", "jamais", "pas question", "nan")
+      "ne valide pas", "ne validez pas", "pas du tout", "jamais", "pas question", "nan",
+      "no", "nope", "not at all", "never", "no way", "cancel", "don t", "do not")
 # Négations qui transforment un « oui-mot » en refus (« je ne confirme pas », « pas d'accord »).
 NEGATED = ("pas d accord", "ne confirme pas", "ne confirmez pas", "ne valide pas", "ne validez pas",
-           "je ne veux pas", "veux pas", "c est pas bon", "ce n est pas bon", "n est pas bon")
+           "je ne veux pas", "veux pas", "c est pas bon", "ce n est pas bon", "n est pas bon",
+           "don t agree", "do not agree", "not ok", "not okay", "don t confirm", "do not confirm",
+           "don t want", "do not want", "not right", "that s wrong")
 
 
 def parse_intent(text: str, context: str = "idle") -> Optional[str]:
@@ -93,9 +104,11 @@ def parse_intent(text: str, context: str = "idle") -> Optional[str]:
 # Bruit : onomatopées et hallucinations classiques du STT sur du silence.
 FILLERS = {"euh", "heu", "hum", "hmm", "hm", "mmh", "mm", "bah", "ben", "beh", "ah", "oh", "eh",
            "hein", "pff", "ouf", "hop", "la", "et", "alors", "donc", "bon", "voila", "ha", "hu",
-           "merci"}  # « Merci. » : hallucination fréquente de Gladia sur la fin d'écho
+           "merci",  # « Merci. » : hallucination fréquente de Gladia sur la fin d'écho
+           "uh", "um", "umm", "er", "erm", "mhm", "so", "well", "thank", "thanks", "you"}
 HALLUCINATIONS = ("sous titrage", "sous titres", "merci d avoir regarde", "abonnez vous",
-                  "amara org", "st 501")
+                  "amara org", "st 501",
+                  "thanks for watching", "thank you for watching", "subscribe", "subtitles by")
 
 
 def is_noise(text: str) -> bool:
@@ -110,12 +123,15 @@ def is_noise(text: str) -> bool:
 # Réponse « c'est fait » à une question de connexion (la personne tape elle-même ses identifiants).
 LOGIN_DONE = ("c est bon", "c est fait", "voila", "ok", "okay", "d accord", "je suis connecte",
               "je suis connectee", "connecte", "connectee", "ca y est", "c bon", "termine", "fini",
-              "j ai fini", "oui", "c est ok", "vas y", "allez y", "continue", "continuez", "go")
+              "j ai fini", "oui", "c est ok", "vas y", "allez y", "continue", "continuez", "go",
+              "done", "i m done", "it s done", "i m logged in", "logged in", "finished", "all set",
+              "ready", "yes", "go ahead", "that s it")
 
 
 def is_login_question(question: str) -> bool:
     norm = normalize(question)
-    return "connecter" in norm or "mot de passe" in norm or "identifiant" in norm
+    return ("connecter" in norm or "mot de passe" in norm or "identifiant" in norm
+            or "log in" in norm or "login" in norm or "password" in norm or "sign in" in norm)
 
 
 def is_login_done(text: str) -> bool:

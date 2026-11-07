@@ -1,11 +1,11 @@
 ---
 name: free-personal-info
 description: Use when the person wants to change their contact email address or postal address (coordonnées, infos personnelles) in the Free Mobile customer area.
-label: Mes coordonnées
-ask: Je voudrais voir ou modifier mes coordonnées.
-keywords: coordonnées | coordonnees | adresse | e-mail | email | mail | informations personnelles
-steps: Ouvrir votre espace abonné | Vous connecter | Ouvrir vos informations personnelles | Modifier vos coordonnées | Valider avec votre accord
-steps_view: Ouvrir votre espace abonné | Vous connecter | Ouvrir vos informations personnelles | Lire vos coordonnées
+label: My details
+ask: I'd like to see or change my contact details.
+keywords: details | address | email | e-mail | contact | coordonnées
+steps: Open your customer area | Log in | Open your personal details | Edit your details | Confirm with your approval
+steps_view: Open your customer area | Log in | Open your personal details | Read your details
 order: 3
 ---
 # Change personal details (coordonnées) in the Free Mobile customer area
@@ -21,15 +21,15 @@ complete a value yourself.
 ## Where
 - https://mobile.free.fr/account/ → "Mon compte" → "Mes infos personnelles"
   (also written "Mes informations personnelles").
-- Si une connexion, un mot de passe ou un code SMS est demandé, appelle `ask_user` pour que la
-  personne le tape elle-même, puis attends. Never type an identifier, password or code yourself.
+- If a login, a password or a text-message code is requested, call `ask_user` so the
+  person types it herself, then wait. Never type an identifier, password or code yourself.
 - If the page asks to choose a line ("Choisir une ligne"), choose the main line; if unsure, call `ask_user`.
 
 ## Change the contact email
 1. Click "Modifier" next to "Mon adresse email".
 2. Type the new email address into the new-address field. Check it letter by letter.
-3. When the page asks to confirm the password: appelle `ask_user` pour que la personne le tape
-   elle-même, puis attends.
+3. When the page asks to confirm the password: call `ask_user` so the person types it
+   herself, then wait.
 4. Call `confirm_change` with a short French summary such as:
    "remplacer l'adresse email <ancienne> par <nouvelle>".
 5. Only if the reply says the user approved: click "Modifier mon adresse email".
@@ -46,8 +46,8 @@ complete a value yourself.
    (e.g. "REP" for République, "PLA" for PLACE) or the digits of a number, then click the match;
    scroll the list itself only if typing does nothing),
    then the street number. Check each field.
-3. When the page asks to re-enter the password: appelle `ask_user` pour que la personne le tape
-   elle-même, puis attends.
+3. When the page asks to re-enter the password: call `ask_user` so the person types it
+   herself, then wait.
 4. Call `confirm_change` with a summary such as: "remplacer l'adresse postale <ancienne> par <nouvelle>".
 5. Only if the user approved: click "Enregistrer". If refused: do not click it, answer that the change was cancelled.
 6. Free then sends a letter with a verification code ("code de vérification") to the new address.

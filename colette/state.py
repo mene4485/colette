@@ -181,7 +181,7 @@ class StateServer:
         self._confirm_future = asyncio.get_running_loop().create_future()
         self._status_before_confirm = self.state.status
         card = {"text": text, "title": title or text, "bullets": list(bullets or []),
-                "yes": yes or "Oui, je suis d'accord", "no": no or "Non, ne rien changer"}
+                "yes": yes or "Yes, I agree", "no": no or "No, don't change anything"}
         self.update(confirm=card, status="awaiting_confirm", open=True)
         return self._confirm_future
 

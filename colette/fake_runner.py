@@ -10,26 +10,26 @@ from loguru import logger
 
 from colette.h_agent import VALIDATE_STEP, AskUser, Confirm, OnPlan, OnStep, OnStepDone, Step, _maybe_await
 
-FAKE_PLAN = ["Ouvrir votre espace abonné", "Trouver les forfaits disponibles",
-             "Choisir le forfait avec vous", VALIDATE_STEP]
+FAKE_PLAN = ["Open your customer area", "Find the available plans",
+             "Choose the plan with you", VALIDATE_STEP]
 
 FAKE_STEPS = [
-    ("J'ouvre votre espace abonné Free Mobile", 3.0),
-    ("Je clique sur « Mon forfait »", 3.5),
-    ("Je regarde les forfaits disponibles", 4.0),
+    ("I'm opening your Free Mobile customer area", 3.0),
+    ("I'm clicking \"My plan\"", 3.5),
+    ("I'm looking at the available plans", 4.0),
 ]
-FAKE_QUESTION = "Je vois deux forfaits moins chers : le forfait à deux euros, ou celui à neuf euros quatre-vingt-dix-neuf. Lequel préférez-vous ?"
-FAKE_LOGIN = ("Il faut vous connecter. Tapez vous-même votre identifiant et votre mot de passe, je ne "
-              "regarde pas. Dites-moi « c'est bon » quand c'est fait.")
+FAKE_QUESTION = "I see two cheaper plans: the two euro plan, or the one at nine euros ninety-nine. Which one would you prefer?"
+FAKE_LOGIN = ("You need to log in. Type your ID and your password yourself, I'm not looking. "
+              "Tell me 'done' when you're finished.")
 FAKE_STEPS_AFTER = [
-    ("Je sélectionne le forfait choisi", 3.0),
-    ("J'ouvre la page de récapitulatif", 3.5),
+    ("I'm selecting the chosen plan", 3.0),
+    ("I'm opening the summary page", 3.5),
 ]
 
 
 FAKE_STEPS_VALIDATE = [
-    ("Je clique sur « Valider »", 3.0),
-    ("Je vérifie que le changement est bien enregistré", 3.0),
+    ("I'm clicking \"Confirm\"", 3.0),
+    ("I'm checking that the change was saved", 3.0),
 ]
 
 
@@ -53,7 +53,7 @@ class FakeDemarcheRunner:
         self._resumed.set()
         self._cancelled = False
         self._on_step: Optional[OnStep] = None
-        self._choice = "le forfait à deux euros"
+        self._choice = "the two euro plan"
         self.validated = False  # vrai seulement si follow_up() a « cliqué » sur Valider
 
     async def _sleep(self, seconds: float) -> None:
@@ -61,7 +61,7 @@ class FakeDemarcheRunner:
         await self._resumed.wait()
         if self._cancelled:
             self.status = "interrupted"
-            raise RuntimeError("Démarche annulée par la personne")
+            raise RuntimeError("Task cancelled by the person")
 
     async def run(
         self,
@@ -102,7 +102,7 @@ class FakeDemarcheRunner:
         if os.getenv("COLETTE_FAKE_FAIL", "") in ("1", "true"):
             self.status = "failed"
             raise RuntimeError("[fake] la page « Changer de forfait » ne répond pas (COLETTE_FAKE_FAIL)")
-        choice = "le forfait à deux euros"
+        choice = "the two euro plan"
         if ask_user is not None:
             await _maybe_await(on_step(Step(text=FAKE_QUESTION, kind="question")))
             choice = (await ask_user(FAKE_QUESTION)) or choice
@@ -112,19 +112,19 @@ class FakeDemarcheRunner:
             await _maybe_await(on_step(Step(text=text, url=url)))
         await done(3)
         self._choice = choice
-        price = "neuf euros quatre-vingt-dix-neuf" if "9" in choice or "neuf" in choice.lower() else "deux euros"
+        price = "nine euros ninety-nine" if "9" in choice or "nine" in choice.lower() else "two euros"
         if confirm is not None and self.use_confirm_tool:
-            summary = f"passer au forfait à {price} par mois, à partir du 1er décembre"
+            summary = f"switch to the plan at {price} per month, starting December 1"
             logger.info("[fake] confirm_change({!r}, costs_money=True)", summary)
             ok = await confirm(summary, True)
             if self._cancelled:
                 self.status = "interrupted"
-                raise RuntimeError("Démarche annulée par la personne")
+                raise RuntimeError("Task cancelled by the person")
             if not ok:
                 self.status = "idle"
                 logger.info("[fake] ❌ refusé : « Valider » non cliqué")
-                return ("La personne a refusé : je n'ai pas cliqué sur « Valider ». Rien n'a été changé.\n"
-                        "CONFIRMATION: aucune")
+                return ("The person said no: I didn't click \"Confirm\". Nothing was changed.\n"
+                        "CONFIRMATION: none")
             for text, delay in FAKE_STEPS_VALIDATE:
                 await self._sleep(delay)
                 await _maybe_await(on_step(Step(text=text, url=url)))
@@ -132,14 +132,13 @@ class FakeDemarcheRunner:
             self.validated = True
             self.status = "idle"
             logger.info("[fake] ✅ « Valider » cliqué (simulé) après confirm_change")
-            return ("C'est validé : le nouveau forfait démarre le 1er décembre. Un e-mail de confirmation "
-                    "a été envoyé.\nCONFIRMATION: aucune")
+            return ("It's confirmed: the new plan starts on December 1. A confirmation email "
+                    "has been sent.\nCONFIRMATION: none")
         self.status = "idle"
         return (
-            f"La personne a choisi : « {choice} ». Je suis sur la page de récapitulatif du "
-            "changement de forfait ; le nouveau forfait démarrerait le 1er décembre. "
-            "Il reste à cliquer sur « Valider » (non fait).\n"
-            f"CONFIRMATION: passer au forfait à {price} par mois, à partir du 1er décembre"
+            f"The person chose: \"{choice}\". I'm on the plan change summary page; the new plan "
+            "would start on December 1. \"Confirm\" still has to be clicked (not done).\n"
+            f"CONFIRMATION: switch to the plan at {price} per month, starting December 1"
         )
 
     async def follow_up(self, message: str) -> str:
@@ -154,7 +153,7 @@ class FakeDemarcheRunner:
         self.validated = True
         self.status = "idle"
         logger.info("[fake] ✅ « Valider » cliqué (simulé)")
-        return "C'est validé : le nouveau forfait démarre le 1er décembre. Un e-mail de confirmation a été envoyé."
+        return "It's confirmed: the new plan starts on December 1. A confirmation email has been sent."
 
     async def close(self) -> None:
         if self._on_step is not None:

@@ -31,8 +31,8 @@ SKILLS_DIR = Path(__file__).parent / "skills"  # vrai Free ; la maquette : site.
 PREAMBLE = """\
 ## Before anything else (Colette)
 1. Call `annoncer_etapes` FIRST, before any action on the website: 3 to 6 short steps in simple
-   French that follow this skill (e.g. « Ouvrir votre espace abonné », « Trouver vos factures »).
-   If something will need to be validated, the last step is exactly « Valider avec votre accord ».
+   English that follow this skill (e.g. "Open your customer area", "Find your bills").
+   If something will need to be validated, the last step is exactly "Confirm with your approval".
 2. After finishing each of those steps, call `etape_terminee` with its number (starting at 1).
 3. Before any click that validates, saves, pays or cancels, call `confirm_change` and click only
    if the reply starts with "Approved".
@@ -109,9 +109,11 @@ def list_shortcuts(directory: Optional[Path] = None) -> list[dict]:
     return [item for _, item in sorted(items, key=lambda x: (x[0], x[1]["label"]))]
 
 
-VIEW_WORDS = ("voir", "consulter", "récupérer", "recuperer", "afficher", "regarder", "connaître",
+VIEW_WORDS = ("see", "check", "view", "look at", "show me", "find out", "what is", "what s", "read",
+              "know", "get my", "voir", "consulter", "récupérer", "recuperer", "afficher", "regarder", "connaître",
               "connaitre", "vérifier", "verifier", "lire", "savoir", "quelle est", "quel est", "retrouver")
-CHANGE_WORDS = ("modifier", "changer", "mettre à jour", "remplacer", "corriger", "passer à", "passer au")
+CHANGE_WORDS = ("change", "update", "modify", "edit", "replace", "correct", "switch", "move to",
+                "modifier", "changer", "mettre à jour", "remplacer", "corriger", "passer à", "passer au")
 
 
 def is_view_request(objectif: str) -> bool:

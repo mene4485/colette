@@ -30,8 +30,8 @@ from colette.skills_loader import load_skills
 TERMINAL = {"completed", "failed", "timed_out", "interrupted"}
 
 DEMO_EXCEPTION = (
-    " Sur la maquette en ligne, après la connexion, la réponse de ask_user peut contenir une adresse "
-    "http : ouvre-la dans la barre d'adresse, elle te connecte avec la session de la personne."
+    " On the online demo, after the login, the ask_user reply may contain an http address: open it in "
+    "the address bar, it logs you in with the person's session."
 )
 
 
@@ -53,37 +53,35 @@ OnStepDone = Callable[[int], Union[None, Awaitable[None]]]  # etape_terminee (nu
 Confirm = Callable[[str, bool], Awaitable[bool]]  # confirm_change(summary, costs_money) → oui ?
 
 H_SKILLS = ["h/visual-browser", "h/answering", "h/planning"]
-VALIDATE_STEP = "Valider avec votre accord"
+VALIDATE_STEP = "Confirm with your approval"
 APPROVED = "Approved by the user: proceed."
 REFUSED = "Not done: the user refused. Stop."
 
 DEFAULT_INSTRUCTIONS = (
-    "Tu aides une personne âgée à faire une démarche en ligne dans SON navigateur. "
-    "À chaque étape, écris dans ton message une phrase courte et simple en français qui dit "
-    "ce que tu fais (ex. « J'ouvre la page de votre forfait. »). "
-    "Si une information te manque (identifiant, choix, code reçu par SMS), ou si une page de "
-    "connexion apparaît, appelle l'outil ask_user et attends la réponse ; ne devine jamais. "
-    "La personne répond par petits morceaux : pose une seule question courte par information "
-    "(ex. pour une adresse : le numéro et la rue, puis le code postal, puis la ville), garde ce "
-    "qu'elle a déjà dit et ne demande que ce qui manque. "
-    "Ne tape jamais de mot de passe toi-même : demande à la personne de le taper. "
-    "Ne clique jamais sur un bouton qui valide, paie, résilie ou envoie quelque chose tant que "
-    "confirm_change n'a pas répondu « Approved » (ou qu'un message ne t'a pas dit explicitement que "
-    "la personne a confirmé à voix haute) ; sinon arrête-toi avant et réponds. "
-    "Une bulle violette « Colette » (et son panneau) s'affiche en bas à droite de chaque page : "
-    "c'est ton interface avec la personne, elle ne fait pas partie du site. Ignore-la, ne clique "
-    "jamais dessus (ni sur ses boutons Pause, Stop ou ×), n'essaie pas de la fermer et ne la "
-    "confonds pas avec le chat d'assistance du site. Elle laisse passer les clics : si un élément "
-    "du site est en partie caché derrière elle, clique simplement sur cet élément. "
-    "Avant toute action sur le site, lis le skill qui correspond à la démarche (s'il y en a un), puis "
-    "appelle annoncer_etapes avec 3 à 6 étapes courtes en français, compréhensibles par la personne "
-    f"(ex. « Ouvrir votre espace abonné »). Si une action devra être validée, la dernière étape est "
-    f"exactement « {VALIDATE_STEP} ». Appelle ensuite etape_terminee(numero) à la fin de chaque étape. "
-    "Avant tout clic qui valide, paie, résilie, enregistre ou envoie quelque chose, appelle "
-    "confirm_change avec un résumé court en français (ce que le bouton ferait, prix et date) et "
-    "costs_money=true si cela change ce que la personne paie ; ne clique que si la réponse dit "
-    "« Approved ». Si une connexion, un mot de passe ou un code SMS est demandé, appelle ask_user pour "
-    "que la personne le tape elle-même, puis attends."
+    "You help an elderly person do an online task in HER browser. "
+    "At each step, write in your message a short and simple English sentence saying what you are doing "
+    "(e.g. \"I'm opening your plan page.\"). "
+    "If some information is missing (ID, a choice, a code received by text message), or if a login page "
+    "appears, call the ask_user tool and wait for the answer; never guess. "
+    "The person answers in small pieces: ask one short question per piece of information "
+    "(e.g. for an address: number and street, then postcode, then city), keep what she already said "
+    "and only ask for what is missing. "
+    "Never type a password yourself: ask the person to type it. "
+    "Never click a button that validates, pays, cancels or sends something until confirm_change has "
+    "answered \"Approved\" (or a message explicitly told you the person confirmed aloud); otherwise stop "
+    "before it and answer. "
+    "A purple \"Colette\" bubble (and its panel) is shown at the bottom right of every page: it is your "
+    "interface with the person, it is not part of the website. Ignore it, never click it (nor its Pause, "
+    "Stop or × buttons), never try to close it and don't confuse it with the website's support chat. "
+    "Clicks go through it: if a website element is partly hidden behind it, just click that element. "
+    "Before any action on the website, read the skill that matches the task (if there is one), then "
+    "call annoncer_etapes with 3 to 6 short English steps the person can understand "
+    f"(e.g. \"Open your customer area\"). If an action will need to be validated, the last step is "
+    f"exactly \"{VALIDATE_STEP}\". Then call etape_terminee(numero) at the end of each step. "
+    "Before any click that validates, pays, cancels, saves or sends something, call confirm_change "
+    "with a short English summary (what the button would do, price and date) and costs_money=true if it "
+    "changes what the person pays; click only if the reply says \"Approved\". If a login, a password or "
+    "a text-message code is requested, call ask_user so that the person types it herself, then wait."
 )
 
 
@@ -95,21 +93,21 @@ def describe_action(req: dict) -> str:
     if name in ("ask_user", "answer", "annoncer_etapes", "etape_terminee", "confirm_change"):
         return ""  # déjà remonté par le tool lui-même (question, plan, carte OUI/NON)
     if name == "go_to_web":
-        return f"J'ouvre {args.get('url', 'la page')}"
+        return f"I'm opening {args.get('url', 'the page')}"
     if name in ("click_web", "double_click_web"):
-        return f"Je clique sur {element}" if element else "Je clique"
+        return f"I'm clicking {element}" if element else "I'm clicking"
     if name in ("write_web", "type_web", "fill_web"):
-        return f"J'écris dans {element}" if element else "J'écris"
+        return f"I'm typing in {element}" if element else "I'm typing"
     if name == "scroll_web":
-        return "Je fais défiler la page"
+        return "I'm scrolling the page"
     if name == "wait_web":
-        return "J'attends que la page se charge"
+        return "I'm waiting for the page to load"
     if name == "refresh_web":
-        return "Je recharge la page"
+        return "I'm reloading the page"
     if name == "press_keys_web":
-        return f"J'appuie sur {'+'.join(args.get('keys') or [])}"
+        return f"I'm pressing {'+'.join(args.get('keys') or [])}"
     if name in ("go_back_web", "back_web"):
-        return "Je reviens à la page précédente"
+        return "I'm going back to the previous page"
     return name.replace("_web", "").replace("_", " ")
 
 
@@ -149,25 +147,24 @@ def make_tools(
     if on_plan is not None:
 
         async def annoncer_etapes(etapes: list[str]) -> str:
-            """À appeler EN PREMIER, avant toute action sur le site (après avoir lu le skill de la
-            démarche) : la liste des 3 à 6 étapes que tu vas suivre, chacune courte, en français simple,
-            compréhensible par une personne âgée (ex. « Ouvrir votre espace abonné »). Si une action
-            devra être validée, la dernière étape est exactement « Valider avec votre accord ».
-            Elles sont affichées et lues à la personne."""
+            """Call FIRST, before any action on the website (after reading the task's skill): the list of
+            the 3 to 6 steps you will follow, each short, in simple English an elderly person understands
+            (e.g. "Open your customer area"). If an action will need to be validated, the last step is
+            exactly "Confirm with your approval". They are shown and read to the person."""
             labels = [str(e).strip() for e in etapes or [] if str(e).strip()][:8]
             if not labels:
-                return "Liste vide : donne au moins une étape."
+                return "Empty list: give at least one step."
             logger.info("📋 annoncer_etapes {}", labels)
             await _maybe_await(on_plan(labels))
-            return ("Étapes affichées à la personne. Appelle etape_terminee(numero) à la fin de chaque "
-                    "étape (numéro à partir de 1).")
+            return ("Steps shown to the person. Call etape_terminee(numero) at the end of each step "
+                    "(numbers start at 1).")
 
         tools.append(tool(annoncer_etapes, name="annoncer_etapes"))
     if on_step_done is not None:
 
         async def etape_terminee(numero: int) -> str:
-            """À appeler à la fin de chaque étape annoncée avec annoncer_etapes (numero commence à 1).
-            Coche l'étape dans l'affichage de la personne."""
+            """Call at the end of each step announced with annoncer_etapes (numero starts at 1).
+            Ticks the step in the person's display."""
             logger.info("✅ etape_terminee({})", numero)
             await _maybe_await(on_step_done(int(numero)))
             return "OK"
@@ -176,12 +173,12 @@ def make_tools(
     if confirm is not None:
 
         async def confirm_change(summary: str, costs_money: bool = False) -> str:
-            """À appeler JUSTE AVANT tout clic qui valide, paie, résilie, enregistre ou envoie quelque
-            chose. summary : en français, ce que le bouton ferait, en commençant par un verbe à
-            l'infinitif, avec le prix et la date affichés (ex. « passer au Forfait 2€, 2 € par mois,
-            à partir du 1er décembre »). costs_money : true si cela change ce que la personne paie.
-            La personne répond oui ou non à voix haute. Ne clique que si la réponse commence par
-            « Approved » ; sinon ne clique pas, arrête-toi et réponds."""
+            """Call RIGHT BEFORE any click that validates, pays, cancels, saves or sends something.
+            summary: in English, what the button would do, starting with a verb, with the price and date
+            shown (e.g. "switch to the €2 Plan, €2 per month, starting December 1"). costs_money: true if
+            it changes what the person pays. The person answers yes or no aloud. Click only if the reply
+            starts with "Approved"; if it starts with "Not done", follow its instructions (the person may
+            want another choice), otherwise do not click, stop and answer."""
             logger.info("✋ confirm_change({!r}, costs_money={})", summary, costs_money)
             ok = await confirm(str(summary or "").strip(), bool(costs_money))
             if isinstance(ok, str):  # correction de la personne (« non, celui à 29,99 € ») : consigne pour H
@@ -258,7 +255,7 @@ class DemarcheRunner:
         logger.info("Skills : {} + {}", H_SKILLS, [s["name"] for s in skills])
         spec: dict[str, Any] = {
             "name": "colette-local",
-            "description": "Aide une personne âgée à faire une démarche dans son propre Chrome.",
+            "description": "Helps an elderly person do an online task in her own browser.",
             "instructions": self.instructions,
             "environments": [self._environment()],
             "skills": H_SKILLS + skills,
@@ -310,19 +307,18 @@ class DemarcheRunner:
         if ask_user is not None:
 
             async def ask_user_tool(question: str) -> str:
-                """Pose une question à la personne (à l'oral) et renvoie sa réponse.
-                À utiliser pour toute information manquante, une connexion à faire,
-                ou une confirmation avant une action irréversible."""
+                """Asks the person a question (aloud) and returns her answer.
+                Use it for any missing information or a login to do."""
                 await _maybe_await(on_step(Step(text=question, kind="question")))
                 answer = await ask_user(question)
                 # La page a pu changer pendant l'attente (la personne s'est connectée, a cliqué…) :
                 # sa dernière capture est périmée. Constaté au vrai run : Holo recliquait sur
                 # « Se connecter » alors que la personne était déjà connectée.
-                return (f"{answer or '(pas de réponse)'}\n"
-                        "Attention : la page a pu changer pendant que tu attendais (la personne a pu se "
-                        "connecter ou cliquer elle-même). Avant toute autre action, fais wait_web 1 seconde "
-                        "pour voir la page à jour, puis décide à partir de cette nouvelle capture ; ne "
-                        "reclique pas sur « Se connecter » si la personne est déjà connectée.")
+                return (f"{answer or '(no answer)'}\n"
+                        "Careful: the page may have changed while you were waiting (the person may have "
+                        "logged in or clicked herself). Before any other action, do wait_web 1 second to "
+                        "see the updated page, then decide from that new screenshot; do not click "
+                        "\"Log in\" again if the person is already logged in.")
 
             tools.append(tool(ask_user_tool, name="ask_user"))
 

@@ -23,18 +23,17 @@ DEMO_LOGIN = "12345678"
 DEMO_PASSWORD = "colette"
 
 FREE_LOGIN = (
-    "Si une page de connexion apparaît, appelle ask_user avec exactement cette question : « Il faut\n"
-    "vous connecter. Tapez vous-même votre identifiant et votre mot de passe, je ne regarde pas.\n"
-    "Dites-moi « c'est bon » quand c'est fait. » Ne demande JAMAIS l'identifiant, le mot de passe ni\n"
-    "un code : la personne les tape elle-même. Attends sa réponse avant de continuer."
+    "If a login page appears, call ask_user with exactly this question: \"You need to log in. Type\n"
+    "your ID and your password yourself, I'm not looking. Tell me 'done' when you're finished.\" NEVER\n"
+    "ask for the ID, the password or a code: the person types them herself. Wait for her answer\n"
+    "before continuing."
 )
 
 DEMO_LOGIN_TEXT = (
     FREE_LOGIN + "\n"
-    "Si sa réponse contient une adresse qui commence par http, ouvre exactement cette adresse dans la\n"
-    "barre d'adresse : elle te connecte avec la session que la personne vient d'ouvrir. Ne tape aucun\n"
-    "identifiant ni mot de passe.\n"
-    "Si un bandeau de cookies apparaît, clique « Continuer sans accepter »."
+    "If her answer contains an address starting with http, open exactly that address in the address\n"
+    "bar: it logs you in with the session the person just opened. Do not type any ID or password.\n"
+    "If a cookie banner appears, click \"Continue without accepting\"."
 )
 
 
@@ -53,7 +52,7 @@ def start_url() -> str:
 
 
 def site_label() -> str:
-    return "espace abonné Free Mobile, maquette de démonstration" if is_demo() else "espace abonné Free Mobile"
+    return "Free Mobile customer area, demo mock-up" if is_demo() else "Free Mobile customer area"
 
 
 def login_instructions() -> str:

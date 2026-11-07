@@ -86,8 +86,8 @@ ECHO_TAIL_S = 0.4  # micro encore coupé juste après que Colette s'est tue
 ASK_TIMEOUT_S = 180.0
 CONFIRM_TIMEOUT_S = 120.0  # sans réponse → on ne valide pas
 REMIND_GAP_S = 4.0  # « Dites simplement oui ou non. » au plus toutes les 4 s
-ADVISOR_TEXT = ("Vous pouvez appeler le service client Free Mobile au trois, deux, quatre, quatre, "
-                "depuis votre téléphone Free. Je reste là si vous avez besoin de moi.")
+ADVISOR_TEXT = ("You can call Free Mobile customer service on three, two, four, four, "
+                "from your Free phone. I'm still here if you need me.")
 
 _URL_RE = re.compile(r"https?://\S+")
 
@@ -103,10 +103,10 @@ def _confirm_card(action: str, costs_money: bool) -> dict:
     head = parts[0].strip() or action
     bullets = [p.strip()[:1].upper() + p.strip()[1:] + "." for p in parts[1:] if p.strip()]
     if costs_money:
-        bullets.append("Cela change ce que vous payez.")
-    verb = head.split()[0].lower() if head.split() else "valider"
+        bullets.append("This changes what you pay.")
+    verb = head.split()[0].lower() if head.split() else "confirm"
     return {"title": head[:1].upper() + head[1:] + " ?", "bullets": bullets[:3],
-            "yes": f"Oui, {verb}", "no": "Non, ne rien changer"}
+            "yes": f"Yes, {verb}", "no": "No, don't change anything"}
 
 
 def _types_herself(question: str) -> bool:
@@ -119,7 +119,8 @@ def _asks_secret(question: str) -> bool:
 
 
 # « non, je veux celui à 29,99 € » pendant la carte OUI/NON : une correction, pas un refus
-_CORRECTION = re.compile(r"(\d|forfait|euro|celui|celle|autre|plutot|prefere|je veux|je voudrais|max|serie|5g|go\b)")
+_CORRECTION = re.compile(r"(\d|forfait|euro|celui|celle|autre|plutot|prefere|je veux|je voudrais|plan|other|"
+                         r"rather|prefer|i want|i d like|i would like|instead|that one|the one|max|series|serie|5g|go\b|gb\b)")
 
 
 def _is_correction(text: str) -> bool:
@@ -127,7 +128,8 @@ def _is_correction(text: str) -> bool:
     return len(norm.split()) >= 3 and bool(_CORRECTION.search(norm))
 
 
-_BARGE_WORDS = re.compile(r"\b(non|attendez|attends|stop|arrete|arretez|pardon|excusez|minute|une seconde|taisez)\b")
+_BARGE_WORDS = re.compile(r"\b(non|attendez|attends|stop|arrete|arretez|pardon|excusez|minute|une seconde|taisez|"
+                          r"no|wait|hold on|hang on|sorry|excuse me|one second|quiet|cancel)\b")
 
 
 def _echo_score(heard: str, said: str) -> float:
@@ -282,7 +284,7 @@ class VoiceGate(FrameProcessor):
             elif time.monotonic() - self._last_remind > REMIND_GAP_S:
                 self._last_remind = time.monotonic()
                 logger.info("🎯 Pas de oui/non clair → rappel")
-                self._say_later("Dites simplement oui ou non.")
+                self._say_later("Just say yes or no.")
             return True
         login_wait = self.pending and _types_herself(self._question)
         if intent in ("pause", "resume") and login_wait:
@@ -297,7 +299,7 @@ class VoiceGate(FrameProcessor):
                 logger.info("🔇 Ignoré (bruit) pendant la question H : {!r}", text)
                 if not self._relanced and not _types_herself(self._question):
                     self._relanced = True
-                    self._say_later(f"Je n'ai pas bien entendu. {self._question}".strip())
+                    self._say_later(f"Sorry, I didn't catch that. {self._question}".strip())
             else:
                 logger.info("🔇 Ignoré (bruit) : {!r}", text)
             return True
@@ -558,7 +560,7 @@ class ColetteVoice:
             region="eu-west",
             settings=GladiaSTTService.Settings(
                 model="solaria-1",
-                language_config=LanguageConfig(languages=["fr"], code_switching=False),
+                language_config=LanguageConfig(languages=[os.getenv("COLETTE_LANG", "en")], code_switching=False),
                 # Partielles : servent SEULEMENT à couper Colette sur « non / attendez / stop… ». Jamais
                 # affichées : sur le bruit de fond, Gladia invente des débuts de phrase (« On tire ! »).
                 messages_config=MessagesConfig(receive_partial_transcripts=True),
@@ -573,21 +575,21 @@ class ColetteVoice:
         )
         tts = CartesiaTTSService(
             api_key=os.environ["CARTESIA_API_KEY"],
-            settings=CartesiaTTSService.Settings(voice=os.environ["CARTESIA_VOICE_ID"], language=Language.FR),
+            settings=CartesiaTTSService.Settings(voice=os.environ["CARTESIA_VOICE_ID"], language=Language.EN),
         )
 
         run_demarche = FunctionSchema(
             name="run_demarche",
             description=(
-                "Lance l'agent qui fait la démarche sur le site Free dans le navigateur de la personne. "
-                "À appeler UNE SEULE FOIS, quand la personne a confirmé ce qu'elle veut. Ne jamais "
-                "rappeler tant que le résultat n'est pas revenu. La confirmation avant de valider "
-                "est gérée par l'outil lui-même."
+                "Starts the agent that does the task on the Free website for the person. "
+                "Call it ONLY ONCE, when the person has confirmed what she wants. Never call it "
+                "again until the result has come back. The confirmation before validating is "
+                "handled by the tool itself."
             ),
             properties={
                 "objectif": {
                     "type": "string",
-                    "description": "Objectif précis et complet en français, ex. « Changer le forfait Free Mobile pour un forfait moins cher ».",
+                    "description": "Precise and complete goal in English, e.g. \"Change the Free Mobile plan to a cheaper plan\".",
                 }
             },
             required=["objectif"],
@@ -701,11 +703,11 @@ class ColetteVoice:
                 url = f"{base.scheme}://{base.netloc}/colette/claim?{q}"
             if self.gate.pending and is_login_question(self.gate._question) and url.startswith("http"):
                 logger.info("🔑 Session partagée avec l'agent")
-                self.state.add_line("vous", "Connectée ✓")
+                self.state.add_line("vous", "Logged in ✓")
                 self.gate.resolve(
-                    "La personne s'est connectée elle-même sur son écran. Pour reprendre sa session, ouvre "
-                    f"exactement cette adresse dans la barre d'adresse : {url} — puis continue la démarche. "
-                    "Ne tape aucun identifiant ni mot de passe.")
+                    "The person logged in herself on her own screen. To take over her session, open "
+                    f"exactly this address in the address bar: {url} — then continue the task. "
+                    "Do not type any ID or password.")
             return
         if t == "session":  # la bulle partage la session de la personne (connectée) et sa page actuelle
             url = str(msg.get("url") or "")
@@ -717,8 +719,8 @@ class ColetteVoice:
                 self.session_at = time.monotonic()
             return
         if t == "handoff_missing":
-            await self.say("Je ne vois pas encore votre connexion. Tapez votre identifiant et votre mot de "
-                           "passe sur la page, à gauche, puis cliquez sur « Se connecter ».")
+            await self.say("I don't see you logged in yet. Type your ID and your password on the page, "
+                           "on the left, then click \"Log in\".")
             return
         running = self._demarche_task is not None and not self._demarche_task.done()
         if t == "call":
@@ -731,12 +733,12 @@ class ColetteVoice:
                 if not self.greeted:
                     await self.greet()
                 else:
-                    self.state.set_subtitle("Je vous écoute.")
-                    await self.say("Je vous écoute.")
+                    self.state.set_subtitle("I'm listening.")
+                    await self.say("I'm listening.")
         elif t == "shortcut":
             sc = next((s for s in self.state.state.shortcuts if s["id"] == msg.get("id")), None)
             if sc and not running:
-                request = sc.get("ask") or f"Je voudrais {_lower_first(sc['label'])}."
+                request = sc.get("ask") or f"I'd like {_lower_first(sc['label'])}."
                 self.greeted = True  # pas d'accueil par-dessus : la demande part tout de suite
                 self.state.update(heard=request)
                 logger.info("🔘 Raccourci {} → {!r}", msg.get("id"), request)
@@ -754,7 +756,7 @@ class ColetteVoice:
         elif t == "retry":
             if not running and self._last_objectif:
                 self.state.update(outcome=None, call=True, open=True)
-                await self._ask_llm(f"Réessaie une fois la même démarche : {self._last_objectif}")
+                await self._ask_llm(f"Try the same task once more: {self._last_objectif}")
         elif t == "stop":
             # Arrêter : tout s'arrête tout de suite, en silence, micro coupé → écran récapitulatif.
             self.gate.cancel_pending()
@@ -762,7 +764,7 @@ class ColetteVoice:
             if running and not self._stopped:
                 self._stopped = True
                 self.paused = False
-                self.state.update(outcome=self._outcome({"statut": "arrêtée par la personne"}),
+                self.state.update(outcome=self._outcome({"statut": "stopped by the person"}),
                                   busy=False, call=False, confirm=None, status="done")
                 try:
                     await self.runner.cancel()
@@ -794,8 +796,8 @@ class ColetteVoice:
         if self._demarche_task and not self._demarche_task.done():
             logger.warning("🛠️  run_demarche refusé : une démarche est déjà en cours")
             await params.result_callback(
-                {"statut": "refusé", "raison": "Une démarche est déjà en cours, n'appelle plus l'outil. "
-                 "Dis seulement à la personne, en une phrase, que tu t'en occupes déjà."},
+                {"statut": "refused", "raison": "A task is already running, do not call the tool again. "
+                 "Just tell the person, in one sentence, that you are already on it."},
             )
             return
         self._demarche_task = asyncio.current_task()
@@ -808,10 +810,10 @@ class ColetteVoice:
         self._confirmations = []
         self._approved = False
         self._last_objectif = objectif
-        title = (objectif or "Votre démarche").rstrip(" .")
+        title = (objectif or "Your task").rstrip(" .")
         self.state.update(steps=[], status="working", open=True, busy=True, outcome=None,
                           title=title[:1].upper() + title[1:], heard="")
-        self.state.add_step("Comprendre votre demande")
+        self.state.add_step("Understand your request")
         result: dict
         speak = True  # le LLM résume-t-il ? (non : on a déjà tout dit nous-mêmes)
         try:
@@ -825,22 +827,22 @@ class ColetteVoice:
                                           start_url=start, site_label=site.site_label(),
                                           login=site.login_instructions())
             if fresh:
-                goal += ("\nTon navigateur est DÉJÀ connecté avec la session de la personne et ouvert sur la page "
-                         "où elle se trouve. Ne te reconnecte pas et ne repars pas de l'accueil si la page "
-                         "actuelle permet déjà d'avancer : continue depuis cette page.\n")
+                goal += ("\nYour browser is ALREADY logged in with the person's session and open on the page "
+                         "where she is. Do not log in again and do not go back to the home page if the current "
+                         "page already lets you move forward: continue from this page.\n")
             plan = match_plan(objectif)
             if is_view_request(objectif):
-                goal += ("\nLa personne veut seulement CONSULTER une information : ne modifie rien, ne "
-                         "clique sur aucun bouton « Modifier », « Enregistrer » ou « Valider ». Trouve "
-                         "l'information, lis-la et donne-la dans ta réponse finale.\n")
+                goal += ("\nThe person only wants to CHECK some information: change nothing, do not "
+                         "click any \"Edit\", \"Save\" or \"Confirm\" button. Find the information, read "
+                         "it and give it in your final answer.\n")
             if plan:  # toutes les étapes connues dès le début, affichées et lues une fois
                 skill, labels = plan
                 logger.info("📋 Plan du skill {} : {}", skill, labels)
                 await self._announce_plan(labels)
                 self._fixed_plan = True
                 numbered = "\n".join(f"{i}. {l}" for i, l in enumerate(labels, start=1))
-                goal += (f"\nÉtapes DÉJÀ annoncées à la personne (skill {skill}) — n'appelle pas annoncer_etapes, "
-                         f"appelle etape_terminee(numero) avec ces numéros à la fin de chaque étape :\n{numbered}\n")
+                goal += (f"\nSteps ALREADY announced to the person (skill {skill}) — do not call annoncer_etapes, "
+                         f"call etape_terminee(numero) with these numbers at the end of each step:\n{numbered}\n")
             answer = await self.runner.run(
                 goal, on_step=self._on_step, ask_user=self._ask_user,
                 on_plan=self._on_plan, on_step_done=self._on_step_done, confirm=self._confirm_change,
@@ -849,40 +851,40 @@ class ColetteVoice:
             asked = self._confirmations[-1] if self._confirmations else None
             logger.info("🛠️  Phase 1 terminée ; confirm_change : {} ; ligne CONFIRMATION : {!r}", asked, action)
             if self._stopped:
-                result, speak = {"statut": "arrêtée par la personne"}, False
+                result, speak = {"statut": "stopped by the person"}, False
             elif asked is not None and not asked[1]:
                 # Refus via confirm_change : jamais de 2e question, rien n'est validé.
-                result, speak = {"statut": "non validé : la personne a dit non, rien n'a été changé",
+                result, speak = {"statut": "not confirmed: the person said no, nothing was changed",
                                  "resultat": body}, False
             elif action is None:
                 self.state.finish_steps()
-                statut = "validé avec l'accord oral de la personne" if asked else "terminé"
-                result = {"statut": statut, "resultat": body or "(l'agent n'a rien répondu)"}
+                statut = "confirmed with the person's spoken approval" if asked else "done"
+                result = {"statut": statut, "resultat": body or "(the agent gave no answer)"}
             elif asked is not None or await self._approve(action):
                 # Garde-fou deux phases : H s'est arrêté au récapitulatif. Si la personne a déjà dit
                 # oui via confirm_change, on ne redemande pas.
                 self._start_validate_step()
                 answer2 = await self.runner.follow_up(CONFIRMED_FOLLOW_UP)
                 if self._stopped:
-                    result, speak = {"statut": "arrêtée par la personne pendant la validation"}, False
+                    result, speak = {"statut": "stopped by the person during validation"}, False
                 else:
                     self.state.finish_steps()
-                    result = {"statut": "validé avec l'accord oral de la personne",
-                              "resultat": answer2 or "(l'agent n'a rien répondu)"}
+                    result = {"statut": "confirmed with the person's spoken approval",
+                              "resultat": answer2 or "(the agent gave no answer)"}
             elif self._stopped:
-                result, speak = {"statut": "arrêtée par la personne"}, False
+                result, speak = {"statut": "stopped by the person"}, False
             else:
-                result, speak = {"statut": "non validé : la personne a dit non, rien n'a été changé",
+                result, speak = {"statut": "not confirmed: the person said no, nothing was changed",
                                  "resultat": body}, False
         except asyncio.CancelledError:
             self.state.update(busy=False)
             raise
         except Exception as e:
             if self._stopped or getattr(self.runner, "status", None) == "interrupted":
-                result, speak = {"statut": "arrêtée par la personne"}, False
+                result, speak = {"statut": "stopped by the person"}, False
             else:
                 logger.exception("Démarche en échec")
-                result = {"statut": "échec", "erreur": str(e)}
+                result = {"statut": "failed", "erreur": str(e)}
         finally:
             self.working = False
             self.paused = False
@@ -904,9 +906,9 @@ class ColetteVoice:
         final = self._final_speech(outcome)
         if final:
             await self.say(final)
-        result["suite"] = ("Cette démarche est terminée et la personne a déjà entendu le résultat : "
-                           "ne le répète pas. Si elle fait une nouvelle demande, reformule puis rappelle "
-                           "run_demarche normalement.")
+        result["suite"] = ("This task is finished and the person has already heard the result: "
+                           "do not repeat it. If she makes a new request, rephrase it and call "
+                           "run_demarche again as usual.")
         logger.info("🛠️  run_demarche → {}", result)
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=False))
 
@@ -920,18 +922,18 @@ class ColetteVoice:
 
     async def _announce_plan(self, labels: list[str]) -> None:
         labels = [l.rstrip(" .") for l in labels]
-        if labels and "accord" in labels[-1].lower() and labels[-1] != VALIDATE_STEP:
+        if labels and ("accord" in labels[-1].lower() or "approval" in labels[-1].lower()) and labels[-1] != VALIDATE_STEP:
             labels[-1] = VALIDATE_STEP  # libellé imposé pour la dernière étape
         self._plan_announced = True
         self.state.set_steps(labels)
         self.state.advance_step()  # 1re étape en cours
         validate = labels[-1] == VALIDATE_STEP
         todo = labels[:-1] if validate else labels
-        nums = ("un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit")
+        nums = ("one", "two", "three", "four", "five", "six", "seven", "eight")
         spoken = " ; ".join(f"{nums[i] if i < len(nums) else i + 1}, {_lower_first(l)}" for i, l in enumerate(todo))
-        text = f"Voici ce que je vais faire : {spoken}."
+        text = f"Here is what I will do: {spoken}."
         if validate:
-            text += " Et je vous demanderai votre accord avant de valider."
+            text += " And I will ask for your approval before confirming anything."
         logger.info("📋 Plan lu : {}", text)
         self._last_narration = time.monotonic() + 3.0  # pas de narration par-dessus le plan
         await self.say(text)
@@ -954,7 +956,7 @@ class ColetteVoice:
         if label == VALIDATE_STEP:
             return ""  # la carte d'accord s'en charge
         self._announced_steps.add(idx)
-        return f"Maintenant, je vais {_lower_first(label)}."
+        return f"Now I will {_lower_first(label)}."
 
     def _spawn_say(self, text: str) -> None:
         if not text or self._stopped or self.paused:
@@ -979,12 +981,12 @@ class ColetteVoice:
             return False
         self._start_validate_step()
         self._correction = ""
-        ok = await self._approve(summary or "valider cette action", costs_money=costs_money)
+        ok = await self._approve(summary or "confirm this action", costs_money=costs_money)
         if not ok and self._correction and not self._stopped:
             corr, self._correction = self._correction, ""
             return ("Not done yet: the person does NOT want this choice. She said: « " + corr + " ». "
-                    "Do not stop. Go back to the list (« Changer de forfait » or « Annuler »), click the "
-                    "button of exactly what she asked for (e.g. « Choisir ce forfait » in that plan's section), "
+                    "Do not stop. Go back to the list (\"Cancel\" or \"Change plan\"), click the "
+                    "button of exactly what she asked for (e.g. \"Choose this plan\" in that plan's section), "
                     "then call confirm_change again with the new summary.")
         self._confirmations.append((summary, ok))
         return ok and not self._stopped
@@ -999,26 +1001,26 @@ class ColetteVoice:
     def _outcome(self, result: dict) -> dict:
         statut = result.get("statut", "")
         nothing_changed = not self._approved
-        if statut.startswith("échec"):
-            return {"kind": "failed", "title": "Je n'ai pas pu terminer",
-                    "text": "Le site ne répond pas comme prévu.", "summary": [], "nothing_changed": nothing_changed}
+        if statut.startswith("failed"):
+            return {"kind": "failed", "title": "I couldn't finish",
+                    "text": "The website isn't responding as expected.", "summary": [], "nothing_changed": nothing_changed}
         done_steps = [s["label"] for s in self.state.state.steps
-                      if s["state"] == "done" and s["label"] != "Comprendre votre demande"]
-        if statut.startswith("arrêtée"):
-            return {"kind": "stopped", "title": "D'accord, j'ai arrêté",
-                    "text": "Je me suis arrêtée à votre demande.", "summary": done_steps[-6:],
+                      if s["state"] == "done" and s["label"] != "Understand your request"]
+        if statut.startswith("stopped"):
+            return {"kind": "stopped", "title": "OK, I stopped",
+                    "text": "I stopped as you asked.", "summary": done_steps[-6:],
                     "nothing_changed": nothing_changed}
-        if statut.startswith("non validé"):
-            return {"kind": "refused", "title": "Rien n'a été changé",
-                    "text": "Vous avez dit non : je n'ai rien validé.", "summary": [], "nothing_changed": True}
+        if statut.startswith("not confirmed"):
+            return {"kind": "refused", "title": "Nothing was changed",
+                    "text": "You said no: I didn't confirm anything.", "summary": [], "nothing_changed": True}
         text = _URL_RE.sub("la page", str(result.get("resultat") or "")).strip()
         text = re.sub(r"[*_#`]+", "", text)  # markdown de H (« **Montant** ») : texte lu et affiché brut
         text = re.sub(r"\s*(?:^|\n)\s*-\s+", " ", text).strip()
         if text.startswith("("):
             text = ""
         summary = [s["label"] for s in self.state.state.steps
-                   if s["state"] == "done" and s["label"] != "Comprendre votre demande"]
-        return {"kind": "success", "title": "C'est fait !", "text": text, "summary": summary[-6:],
+                   if s["state"] == "done" and s["label"] != "Understand your request"]
+        return {"kind": "success", "title": "All done!", "text": text, "summary": summary[-6:],
                 "nothing_changed": False}
 
     @staticmethod
@@ -1027,21 +1029,21 @@ class ColetteVoice:
         kind = outcome.get("kind")
         if kind == "success":
             text = outcome.get("text") or ""
-            return f"C'est fait. {text}".strip()
+            return f"All done. {text}".strip()
         if kind == "failed":
-            tail = " Rien n'a été modifié sur votre compte." if outcome.get("nothing_changed") else ""
-            return "Je n'ai pas pu terminer. Ce n'est pas de votre faute." + tail
+            tail = " Nothing was changed on your account." if outcome.get("nothing_changed") else ""
+            return "I couldn't finish. It's not your fault." + tail
         return ""  # arrêtée : silence ; refusée : « je ne valide rien » déjà dit à la question
 
     def _outcome_speech(self) -> str:
         o = self.state.state.outcome
         if not o:
-            return "Je n'ai rien fait pour l'instant. Que puis-je faire pour vous ?"
+            return "I haven't done anything yet. What can I do for you?"
         parts = [o.get("title", "").rstrip(" !.") + ".", o.get("text", "")]
         if o.get("summary"):
-            parts.append("Voici ce que j'ai fait : " + " ; ".join(_lower_first(s) for s in o["summary"]) + ".")
+            parts.append("Here is what I did: " + "; ".join(_lower_first(s) for s in o["summary"]) + ".")
         if o.get("kind") != "success" and o.get("nothing_changed"):
-            parts.append("Rien n'a été modifié sur votre compte.")
+            parts.append("Nothing was changed on your account.")
         return " ".join(p for p in parts if p)
 
     async def _hush(self) -> None:
@@ -1063,10 +1065,10 @@ class ColetteVoice:
 
     async def _confirm(self, action: str, *, costs_money: bool = False) -> bool:
         """Carte OUI/NON + question orale. Seul un oui explicite (voix ou bouton) renvoie True."""
-        action = action.strip().rstrip(".") or "valider cette action"
+        action = action.strip().rstrip(".") or "confirm this action"
         card = action[0].upper() + action[1:] + " ?"
-        money = " Attention, cela change ce que vous payez." if costs_money else ""
-        question = f"Je m'apprête à {_lower_first(action)}.{money} Je valide ? Dites oui ou non."
+        money = " Note: this changes what you pay." if costs_money else ""
+        question = f"I'm about to {_lower_first(action)}.{money} Shall I confirm? Say yes or no."
         logger.info("✋ Confirmation demandée : {}", action)
         fut = self.state.ask_confirm(card, **_confirm_card(action, costs_money))
         await self.say(question)
@@ -1080,9 +1082,9 @@ class ColetteVoice:
         if self._stopped:
             return False
         if not ok and self._correction:
-            await self.say("D'accord, je prends plutôt celui-là.")
+            await self.say("OK, I'll take that one instead.")
             return ok
-        await self.say("Merci, je valide." if ok else "D'accord, je ne valide rien. Rien n'a été changé.")
+        await self.say("Thank you, I'm confirming." if ok else "OK, I won't confirm anything. Nothing was changed.")
         return ok
 
     def _on_step(self, step: Step) -> None:
@@ -1131,32 +1133,32 @@ class ColetteVoice:
         logger.info("❓ Agent H : {}", question)
         self._narrated_seq = self._step_seq  # narration en attente jetée : elle date d'avant la question
         login = is_login_question(question)
-        login_idx = self._step_index("connect") if login else None
+        login_idx = (self._step_index("connect") if self._step_index("connect") is not None else self._step_index("log in")) if login else None
         if login_idx is not None:
             self.state.complete_through(login_idx)  # « Vous connecter » en cours
         fut = self.gate.expect_answer(question)
         if login and self.handoff:
-            question = ("Il faut vous connecter. Tapez vous-même votre identifiant et votre mot de passe sur "
-                        "la page, à gauche. Je ne vois pas ce que vous tapez.")
+            question = ("You need to log in. Type your ID and your password yourself on the page, "
+                        "on the left. I can't see what you type.")
             self.state.update(login_handoff=True)
         self.state.update(status="listening", subtitle=question, heard="")
         await self.say(question)
         try:
             answer = await asyncio.wait_for(fut, ASK_TIMEOUT_S if not login else ASK_TIMEOUT_S * 2)
         except (asyncio.TimeoutError, asyncio.CancelledError):
-            answer = "(pas de réponse)"
+            answer = "(no answer)"
         finally:
             if self.state.state.login_handoff:
                 self.state.update(login_handoff=False)
         self._narrated_seq = self._step_seq
         self._last_narration = time.monotonic()  # pas de narration tout de suite : H regarde d'abord la page
-        if login_idx is not None and answer != "(pas de réponse)":
+        if login_idx is not None and answer != "(no answer)":
             self.state.complete_through(login_idx + 1)
             nxt = self._step_announcement(login_idx + 1)
-            done = "Merci, je vous connecte. " if site.is_demo() else "Merci, la connexion est faite. "
+            done = "Thank you, I'm logging you in. " if site.is_demo() else "Thank you, you're logged in. "
             self._spawn_say((done + nxt).strip())
-        elif answer != "(pas de réponse)":
-            self._spawn_say("Merci, je continue.")
+        elif answer != "(no answer)":
+            self._spawn_say("Thank you, I'll continue.")
         if self.working and self.state.state.status == "listening":
             self.state.set_status("paused" if self.paused else "working")
         logger.info("↳ réponse transmise à H : {}", answer)

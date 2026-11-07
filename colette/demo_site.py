@@ -1,13 +1,13 @@
-"""Maquette locale de l'espace abonné Free Mobile, avec un compte fictif, pour la démo Colette.
+"""Local mock-up of the Free Mobile customer area, with a fictitious account, for the Colette demo.
 
-Sert sur http://localhost:8000 (bibliothèque standard uniquement). Démarches possibles :
-- changer de forfait (liste des offres → récapitulatif → « Valider le changement ») ;
-- télécharger la facture la plus récente (vrai PDF généré à la volée) ;
-- modifier ses coordonnées (adresse, e-mail, téléphone de contact → « Enregistrer »).
+Served on http://localhost:8000 (standard library only). Possible tasks:
+- change plan (list of plans → summary → "Confirm plan change");
+- download the most recent bill (real PDF generated on the fly);
+- edit contact details (address, email, contact phone → "Save changes").
 
-Compte de démo : identifiant 12345678, mot de passe colette (affichés nulle part sur le site).
-Les modifications sont gardées dans demo_data/account.json ; /reset remet le compte à zéro.
-Ce n'est PAS le site de Free : un bandeau « Maquette de démonstration » est affiché sur chaque page.
+Demo account: ID 12345678, password colette (shown nowhere on the site).
+Changes are kept in demo_data/account.json; /reset resets the account.
+This is NOT the Free website: a "demo mock-up" banner is shown on every page.
 """
 
 from __future__ import annotations
@@ -36,14 +36,14 @@ DEMO_LOGIN = "12345678"
 DEMO_PASSWORD = "colette"
 
 PLANS = {
-    "2e": {"name": "Forfait 2€", "price": 2.00,
-           "details": "2h d'appels · SMS et MMS illimités · 50 Mo d'internet"},
-    "serie": {"name": "Série Free 120 Go", "price": 9.99,
-              "details": "Appels, SMS et MMS illimités · 120 Go en 4G"},
-    "5g": {"name": "Forfait Free 5G 300 Go", "price": 19.99,
-           "details": "Appels, SMS et MMS illimités · 300 Go en 5G · 35 Go depuis l'Europe"},
-    "max": {"name": "Forfait Free 5G Max 350 Go", "price": 29.99,
-            "details": "Appels, SMS et MMS illimités · 350 Go en 5G · 35 Go depuis 100 destinations"},
+    "2e": {"name": "€2 Plan", "price": 2.00,
+           "details": "2 hours of calls · Unlimited texts and MMS · 50 MB of data"},
+    "serie": {"name": "Free Series 120 GB", "price": 9.99,
+              "details": "Unlimited calls, texts and MMS · 120 GB on 4G"},
+    "5g": {"name": "Free 5G 300 GB Plan", "price": 19.99,
+           "details": "Unlimited calls, texts and MMS · 300 GB on 5G · 35 GB from Europe"},
+    "max": {"name": "Free 5G Max 350 GB Plan", "price": 29.99,
+            "details": "Unlimited calls, texts and MMS · 350 GB on 5G · 35 GB from 100 destinations"},
 }
 
 DEFAULT_ACCOUNT = {
@@ -59,12 +59,12 @@ DEFAULT_ACCOUNT = {
     "history": [],
 }
 
-MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
-          "septembre", "octobre", "novembre", "décembre"]
+MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
+          "September", "October", "November", "December"]
 
 
 def euros(x: float) -> str:
-    return f"{x:.2f}".replace(".", ",") + " €"
+    return f"€{x:.2f}"
 
 
 def first_of_next_month(today: Optional[dt.date] = None) -> dt.date:
@@ -72,11 +72,11 @@ def first_of_next_month(today: Optional[dt.date] = None) -> dt.date:
     return (today.replace(day=1) + dt.timedelta(days=32)).replace(day=1)
 
 
-def date_fr(d: dt.date) -> str:
-    return f"{d.day}{'er' if d.day == 1 else ''} {MONTHS[d.month - 1]} {d.year}"
+def date_en(d: dt.date) -> str:
+    return f"{MONTHS[d.month - 1]} {d.day}, {d.year}"
 
 
-# ---- données du compte ----------------------------------------------------------
+# ---- account data ----------------------------------------------------------
 class Store:
     def __init__(self, path: Path = DATA_PATH) -> None:
         self.path = path
@@ -99,7 +99,7 @@ class Store:
     def reset(self) -> None:
         with self.lock:
             self.data["account"] = copy.deepcopy(DEFAULT_ACCOUNT)
-            self.data["secret"] = secrets.token_hex(16)  # déconnecte tout le monde
+            self.data["secret"] = secrets.token_hex(16)  # logs everyone out
             self.save()
 
     @property
@@ -114,7 +114,7 @@ class Store:
 
 
 def invoices(account: dict, today: Optional[dt.date] = None) -> list[dict]:
-    """Les 6 dernières factures, la plus récente d'abord (facture du mois M émise le 1er du mois M+1)."""
+    """The last 6 bills, most recent first (bill for month M issued on the 1st of month M+1)."""
     today = today or dt.date.today()
     out = []
     y, m = today.year, today.month
@@ -134,9 +134,9 @@ def invoices(account: dict, today: Optional[dt.date] = None) -> list[dict]:
     return out
 
 
-# ---- PDF minimal (texte seul, Helvetica, WinAnsi pour les accents et l'€) ------------
+# ---- minimal PDF (text only, Helvetica, WinAnsi for accents and €) ------------
 def make_pdf(lines: list[tuple[str, int, str]]) -> bytes:
-    """lines = [(police "R"|"B", taille, texte)] de haut en bas."""
+    """lines = [(font "R"|"B", size, text)] top to bottom."""
     def esc(s: str) -> bytes:
         return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)").encode("cp1252", "replace")
 
@@ -170,26 +170,26 @@ def invoice_pdf(account: dict, inv: dict) -> bytes:
     plan = PLANS[account["plan"]]
     ht = inv["amount"] / 1.2
     return make_pdf([
-        ("B", 20, "Free Mobile — Facture (maquette de démonstration)"),
-        ("R", 10, "Document fictif généré pour la démo Colette. Ce n'est pas une vraie facture."),
+        ("B", 20, "Free Mobile — Bill (demo mock-up)"),
+        ("R", 10, "Fictitious document generated for the Colette demo. This is not a real bill."),
         ("R", 11, ""),
-        ("B", 13, f"Facture n° {inv['id']}"),
-        ("R", 11, f"Période : du {inv['period_start']:%d/%m/%Y} au {inv['period_end']:%d/%m/%Y}"),
-        ("R", 11, f"Date d'émission : {inv['issued']:%d/%m/%Y}"),
+        ("B", 13, f"Bill No. {inv['id']}"),
+        ("R", 11, f"Period: {date_en(inv['period_start'])} to {date_en(inv['period_end'])}"),
+        ("R", 11, f"Issued on: {date_en(inv['issued'])}"),
         ("R", 11, ""),
-        ("B", 12, "Titulaire"),
+        ("B", 12, "Account holder"),
         ("R", 11, account["holder"]),
         ("R", 11, account["address"]),
         ("R", 11, f"{account['postcode']} {account['city']}"),
-        ("R", 11, f"Ligne : {account['line']}"),
+        ("R", 11, f"Line: {account['line']}"),
         ("R", 11, ""),
-        ("B", 12, "Détail"),
-        ("R", 11, f"{plan['name']} — abonnement mensuel"),
-        ("R", 11, f"Montant HT : {euros(ht)}"),
-        ("R", 11, f"TVA 20 % : {euros(inv['amount'] - ht)}"),
-        ("B", 13, f"Total TTC : {euros(inv['amount'])}"),
+        ("B", 12, "Details"),
+        ("R", 11, f"{plan['name']} — monthly subscription"),
+        ("R", 11, f"Amount excl. VAT: {euros(ht)}"),
+        ("R", 11, f"VAT 20%: {euros(inv['amount'] - ht)}"),
+        ("B", 13, f"Total incl. VAT: {euros(inv['amount'])}"),
         ("R", 11, ""),
-        ("R", 10, "Prélevé automatiquement sur votre compte bancaire."),
+        ("R", 10, "Paid automatically by direct debit from your bank account."),
     ])
 
 
@@ -230,17 +230,17 @@ footer{text-align:center;color:#999;font-size:12px;padding:20px}
 """
 
 COOKIE_BANNER = """
-<div id="cookies"><p><b>Vos choix concernant les cookies.</b> Nous utilisons des cookies pour améliorer votre
-expérience et mesurer l'audience. Vous pouvez accepter, refuser ou personnaliser vos choix.</p>
-<button class="btn sec" onclick="consent('refus')">Continuer sans accepter</button>
-<button class="btn" onclick="consent('ok')">Accepter et fermer</button></div>
+<div id="cookies"><p><b>Your cookie choices.</b> We use cookies to improve your
+experience and measure our audience. You can accept, refuse or customise your choices.</p>
+<button class="btn sec" onclick="consent('refus')">Continue without accepting</button>
+<button class="btn" onclick="consent('ok')">Accept and close</button></div>
 <script>function consent(v){document.cookie='consent='+v+'; path=/; max-age=31536000';
 document.getElementById('cookies').remove();}</script>
 """
 
-NAV = [("accueil", "/account/", "Accueil"), ("forfait", "/account/forfait", "Mon forfait"),
-       ("factures", "/account/factures", "Conso et factures"), ("infos", "/account/infos", "Mes informations"),
-       ("options", "/account/options", "Mes options"), ("aide", "/account/aide", "Assistance")]
+NAV = [("accueil", "/account/", "Home"), ("forfait", "/account/forfait", "My plan"),
+       ("factures", "/account/factures", "Usage & bills"), ("infos", "/account/infos", "My details"),
+       ("options", "/account/options", "My options"), ("aide", "/account/aide", "Help")]
 
 
 def e(x) -> str:
@@ -251,42 +251,42 @@ def page(title: str, body: str, account: Optional[dict] = None, active: str = ""
     user = ""
     side = ""
     if account:
-        user = (f'<div class="user">{e(account["holder"])}<br>Ligne {e(account["line"])} · '
-                f'<a href="/account/logout">Se déconnecter</a></div>')
+        user = (f'<div class="user">{e(account["holder"])}<br>Line {e(account["line"])} · '
+                f'<a href="/account/logout">Log out</a></div>')
         side = "<nav>" + "".join(
-            f'<a href="{href}" class="{"on" if key == active else ""}">{label}</a>' for key, href, label in NAV
+            f'<a href="{href}" class="{"on" if key == active else ""}">{e(label)}</a>' for key, href, label in NAV
         ) + "</nav>"
     content = f'<div class="wrap">{side}<main>{body}</main></div>' if account else body
-    return f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} - Free Mobile (maquette)</title>
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} - Free Mobile (mock-up)</title>
 <style>{CSS}</style></head><body>
-<div class="demo">Maquette de démonstration Colette — ce n'est pas le site officiel de Free. Compte et données fictifs.</div>
-<header><span class="logo">free<small>mobile</small></span><span class="space">Espace Abonné</span>{user}</header>
-{content}<footer>Maquette Colette · Hackathon H Company × 42AI · <a href="/reset">Réinitialiser la démo</a></footer>
+<div class="demo">Colette demo mock-up — not the official Free website. Fictitious account and data.</div>
+<header><span class="logo">free<small>mobile</small></span><span class="space">Customer Area</span>{user}</header>
+{content}<footer>Colette mock-up · Hackathon H Company × 42AI · <a href="/reset">Reset the demo</a></footer>
 {COOKIE_BANNER if banner else ""}</body></html>"""
 
 
 def plan_block(key: str, account: dict, *, choose: bool) -> str:
     p = PLANS[key]
     cur = key == account["plan"]
-    right = ('<span class="muted">Votre forfait actuel</span>' if cur else
-             f'<a class="btn" href="/account/forfait/recap?offre={key}">Choisir ce forfait</a>') if choose else ""
+    right = ('<span class="muted">Your current plan</span>' if cur else
+             f'<a class="btn" href="/account/forfait/recap?offre={key}">Choose this plan</a>') if choose else ""
     return (f'<div class="plan{" cur" if cur else ""}"><div><b>{e(p["name"])}</b>'
-            f'{"<span class=tag>Actuel</span>" if cur else ""}<div class="muted">{e(p["details"])}</div></div>'
-            f'<div style="text-align:right"><div class="price">{euros(p["price"])}<span class="muted">/mois</span></div>'
+            f'{"<span class=tag>Current</span>" if cur else ""}<div class="muted">{e(p["details"])}</div></div>'
+            f'<div style="text-align:right"><div class="price">{euros(p["price"])}<span class="muted">/month</span></div>'
             f'{right}</div></div>')
 
 
 # ---- pages ------------------------------------------------------------------------
 def p_login(error: str = "", nxt: str = "/account/") -> str:
     err = f'<div class="err">{e(error)}</div>' if error else ""
-    return page("Connexion", f"""<div class="login card"><h1>Connexion à votre Espace Abonné</h1>{err}
+    return page("Log in", f"""<div class="login card"><h1>Log in to your Customer Area</h1>{err}
 <form method="post" action="/account/login"><input type="hidden" name="next" value="{e(nxt)}">
-<label for="login">Identifiant (8 chiffres)</label><input type="text" id="login" name="login" autocomplete="username" inputmode="numeric">
-<label for="password">Mot de passe</label><input type="password" id="password" name="password" autocomplete="current-password">
-<label style="display:flex;gap:8px;align-items:center;color:#333"><input type="checkbox" name="remember" value="1"> Rester connecté</label>
-<div class="actions"><button class="btn" type="submit">Se connecter</button></div>
-<p class="muted" style="margin-top:16px"><a href="#">Identifiant ou mot de passe oublié ?</a></p></form></div>""")
+<label for="login">Customer ID (8 digits)</label><input type="text" id="login" name="login" autocomplete="username" inputmode="numeric">
+<label for="password">Password</label><input type="password" id="password" name="password" autocomplete="current-password">
+<label style="display:flex;gap:8px;align-items:center;color:#333"><input type="checkbox" name="remember" value="1"> Stay logged in</label>
+<div class="actions"><button class="btn" type="submit">Log in</button></div>
+<p class="muted" style="margin-top:16px"><a href="#">Forgot your ID or password?</a></p></form></div>""")
 
 
 def p_home(a: dict) -> str:
@@ -294,80 +294,80 @@ def p_home(a: dict) -> str:
     last = invoices(a)[0]
     pending = ""
     if a.get("pending_plan"):
-        pending = (f'<div class="info">Changement de forfait programmé : <b>{e(PLANS[a["pending_plan"]]["name"])}</b> '
-                   f'à partir du {date_fr(first_of_next_month())}.</div>')
-    return page("Accueil", f"""<h1>Bonjour {e(a["holder"].split()[0])},</h1>{pending}
+        pending = (f'<div class="info">Plan change scheduled: <b>{e(PLANS[a["pending_plan"]]["name"])}</b> '
+                   f'starting {date_en(first_of_next_month())}.</div>')
+    return page("Home", f"""<h1>Hello {e(a["holder"].split()[0])},</h1>{pending}
 <div class="grid">
-<div class="card"><h2>Mon forfait</h2><b>{e(plan["name"])}</b><div class="price">{euros(plan["price"])}<span class="muted">/mois</span></div>
-<p class="muted">{e(plan["details"])}</p><a class="btn sec" href="/account/forfait">Gérer mon forfait</a></div>
-<div class="card"><h2>Ma dernière facture</h2><p>Facture de {e(last["period"])}</p><div class="price">{euros(last["amount"])}</div>
-<p class="muted">Émise le {last["issued"]:%d/%m/%Y} · Prélevée automatiquement</p><a class="btn sec" href="/account/factures">Voir mes factures</a></div>
-<div class="card"><h2>Ma consommation</h2><p>Internet : <b>42,7 Go</b> / 300 Go</p><p>Appels : illimités · SMS : illimités</p>
-<p class="muted">Depuis le 1er du mois</p></div>
-<div class="card promo"><h2>Nouveau : l'option Max</h2><p>Plus de data à l'étranger et des services inclus.</p>
-<a href="/account/options">En savoir plus</a></div>
+<div class="card"><h2>My plan</h2><b>{e(plan["name"])}</b><div class="price">{euros(plan["price"])}<span class="muted">/month</span></div>
+<p class="muted">{e(plan["details"])}</p><a class="btn sec" href="/account/forfait">Manage my plan</a></div>
+<div class="card"><h2>My latest bill</h2><p>Bill for {e(last["period"])}</p><div class="price">{euros(last["amount"])}</div>
+<p class="muted">Issued on {date_en(last["issued"])} · Paid by direct debit</p><a class="btn sec" href="/account/factures">See my bills</a></div>
+<div class="card"><h2>My usage</h2><p>Data: <b>42.7 GB</b> / 300 GB</p><p>Calls: unlimited · Texts: unlimited</p>
+<p class="muted">Since the 1st of the month</p></div>
+<div class="card promo"><h2>New: the Max option</h2><p>More data abroad and included services.</p>
+<a href="/account/options">Learn more</a></div>
 </div>""", a, "accueil")
 
 
 def p_forfait(a: dict) -> str:
     pending = ""
     if a.get("pending_plan"):
-        pending = (f'<div class="info">Changement programmé vers <b>{e(PLANS[a["pending_plan"]]["name"])}</b> '
-                   f'le {date_fr(first_of_next_month())}.</div>')
-    return page("Mon forfait", f"""<h1>Mon forfait</h1>{pending}<div class="card"><h2>Forfait actuel</h2>
-{plan_block(a["plan"], a, choose=False)}<p class="muted">Ligne {e(a["line"])} · Engagement : sans engagement</p>
-<div class="actions"><a class="btn" href="/account/forfait/changer">Changer de forfait</a>
-<a class="btn sec" href="/account/options">Gérer mes options</a></div></div>""", a, "forfait")
+        pending = (f'<div class="info">Change scheduled to <b>{e(PLANS[a["pending_plan"]]["name"])}</b> '
+                   f'on {date_en(first_of_next_month())}.</div>')
+    return page("My plan", f"""<h1>My plan</h1>{pending}<div class="card"><h2>Current plan</h2>
+{plan_block(a["plan"], a, choose=False)}<p class="muted">Line {e(a["line"])} · Commitment: no commitment</p>
+<div class="actions"><a class="btn" href="/account/forfait/changer">Change plan</a>
+<a class="btn sec" href="/account/options">Manage my options</a></div></div>""", a, "forfait")
 
 
 def p_changer(a: dict) -> str:
     blocks = "".join(plan_block(k, a, choose=True) for k in PLANS)
-    return page("Changer de forfait", f"""<h1>Changer de forfait</h1><div class="card">
-<p>Choisissez votre nouveau forfait. Le changement prendra effet le <b>{date_fr(first_of_next_month())}</b>.</p>
-{blocks}</div><a href="/account/forfait">← Retour à mon forfait</a>""", a, "forfait")
+    return page("Change plan", f"""<h1>Change plan</h1><div class="card">
+<p>Choose your new plan. The change will take effect on <b>{date_en(first_of_next_month())}</b>.</p>
+{blocks}</div><a href="/account/forfait">← Back to my plan</a>""", a, "forfait")
 
 
 def p_recap(a: dict, key: str) -> str:
     new, old = PLANS[key], PLANS[a["plan"]]
-    start = date_fr(first_of_next_month())
-    return page("Récapitulatif", f"""<h1>Récapitulatif de votre changement de forfait</h1><div class="card">
-<dl><dt>Forfait actuel</dt><dd>{e(old["name"])} — {euros(old["price"])}/mois</dd>
-<dt>Nouveau forfait</dt><dd>{e(new["name"])} — {euros(new["price"])}/mois</dd>
-<dt>Date d'effet</dt><dd>{start}</dd><dt>Ligne concernée</dt><dd>{e(a["line"])}</dd></dl>
-<p class="muted" style="margin-top:16px">En validant, vous acceptez les conditions générales et la brochure tarifaire du nouveau forfait.
-Aucun frais de changement.</p>
+    start = date_en(first_of_next_month())
+    return page("Summary", f"""<h1>Summary of your plan change</h1><div class="card">
+<dl><dt>Current plan</dt><dd>{e(old["name"])} — {euros(old["price"])}/month</dd>
+<dt>New plan</dt><dd>{e(new["name"])} — {euros(new["price"])}/month</dd>
+<dt>Effective date</dt><dd>{start}</dd><dt>Line</dt><dd>{e(a["line"])}</dd></dl>
+<p class="muted" style="margin-top:16px">By confirming, you accept the terms and conditions and the price list of the new plan.
+No change fee.</p>
 <form method="post" action="/account/forfait/valider"><input type="hidden" name="offre" value="{e(key)}">
-<div class="actions"><button class="btn" type="submit">Valider le changement de forfait</button>
-<a class="btn grey" href="/account/forfait/changer">Annuler</a></div></form></div>""", a, "forfait")
+<div class="actions"><button class="btn" type="submit">Confirm plan change</button>
+<a class="btn grey" href="/account/forfait/changer">Cancel</a></div></form></div>""", a, "forfait")
 
 
 def p_confirmation(a: dict) -> str:
     key = a.get("pending_plan") or a["plan"]
-    return page("Confirmation", f"""<h1>Votre demande est enregistrée</h1>
-<div class="ok">Votre changement vers le <b>{e(PLANS[key]["name"])}</b> ({euros(PLANS[key]["price"])}/mois) prendra effet le
-<b>{date_fr(first_of_next_month())}</b>. Un e-mail de confirmation a été envoyé à {e(a["email"])}.</div>
-<a class="btn sec" href="/account/">Retour à l'accueil</a>""", a, "forfait")
+    return page("Confirmation", f"""<h1>Your request has been recorded</h1>
+<div class="ok">Your change to the <b>{e(PLANS[key]["name"])}</b> ({euros(PLANS[key]["price"])}/month) will take effect on
+<b>{date_en(first_of_next_month())}</b>. A confirmation email has been sent to {e(a["email"])}.</div>
+<a class="btn sec" href="/account/">Back to home</a>""", a, "forfait")
 
 
 def p_factures(a: dict) -> str:
     rows = "".join(
-        f'<tr><td>{e(i["period"]).capitalize()}</td><td>{i["issued"]:%d/%m/%Y}</td><td>{e(i["id"])}</td>'
-        f'<td>{euros(i["amount"])}</td><td><a href="/account/factures/{i["id"]}.pdf">Télécharger (PDF)</a></td></tr>'
+        f'<tr><td>{e(i["period"])}</td><td>{date_en(i["issued"])}</td><td>{e(i["id"])}</td>'
+        f'<td>{euros(i["amount"])}</td><td><a href="/account/factures/{i["id"]}.pdf">Download (PDF)</a></td></tr>'
         for i in invoices(a))
-    return page("Conso et factures", f"""<h1>Conso et factures</h1>
-<div class="card"><h2>Mes factures</h2><table><tr><th>Période</th><th>Émise le</th><th>N°</th><th>Montant</th><th></th></tr>
-{rows}</table></div><div class="card"><h2>Ma consommation du mois</h2><p>Internet : 42,7 Go · Appels : 3h12 · SMS : 87</p></div>""",
+    return page("Usage & bills", f"""<h1>Usage &amp; bills</h1>
+<div class="card"><h2>My bills</h2><table><tr><th>Period</th><th>Issued on</th><th>No.</th><th>Amount</th><th></th></tr>
+{rows}</table></div><div class="card"><h2>My usage this month</h2><p>Data: 42.7 GB · Calls: 3h12 · Texts: 87</p></div>""",
                 a, "factures")
 
 
 def p_infos(a: dict, ok: bool = False) -> str:
-    msg = '<div class="ok">Vos coordonnées ont bien été modifiées.</div>' if ok else ""
-    return page("Mes informations", f"""<h1>Mes informations</h1>{msg}<div class="card"><h2>Mes coordonnées</h2>
-<dl><dt>Titulaire</dt><dd>{e(a["holder"])}</dd><dt>Adresse postale</dt><dd>{e(a["address"])}<br>{e(a["postcode"])} {e(a["city"])}</dd>
-<dt>Adresse e-mail</dt><dd>{e(a["email"])}</dd><dt>Téléphone de contact</dt><dd>{e(a["contact_phone"])}</dd></dl>
-<div class="actions"><a class="btn" href="/account/infos/modifier">Modifier mes coordonnées</a></div></div>
-<div class="card"><h2>Mot de passe</h2><p class="muted">Pour votre sécurité, changez régulièrement votre mot de passe.</p>
-<a class="btn sec" href="#">Changer mon mot de passe</a></div>""", a, "infos")
+    msg = '<div class="ok">Your contact details have been updated.</div>' if ok else ""
+    return page("My details", f"""<h1>My details</h1>{msg}<div class="card"><h2>My contact details</h2>
+<dl><dt>Account holder</dt><dd>{e(a["holder"])}</dd><dt>Postal address</dt><dd>{e(a["address"])}<br>{e(a["postcode"])} {e(a["city"])}</dd>
+<dt>Email address</dt><dd>{e(a["email"])}</dd><dt>Contact phone</dt><dd>{e(a["contact_phone"])}</dd></dl>
+<div class="actions"><a class="btn" href="/account/infos/modifier">Edit my contact details</a></div></div>
+<div class="card"><h2>Password</h2><p class="muted">For your security, change your password regularly.</p>
+<a class="btn sec" href="#">Change my password</a></div>""", a, "infos")
 
 
 def p_modifier(a: dict, values: Optional[dict] = None, error: str = "") -> str:
@@ -378,29 +378,29 @@ def p_modifier(a: dict, values: Optional[dict] = None, error: str = "") -> str:
         return (f'<label for="{name}">{label}</label>'
                 f'<input type="{kind}" id="{name}" name="{name}" value="{e(v.get(name, ""))}">')
 
-    return page("Modifier mes coordonnées", f"""<h1>Modifier mes coordonnées</h1>{err}<div class="card">
-<p class="muted">Le titulaire de la ligne ({e(a["holder"])}) ne peut pas être modifié en ligne.</p>
+    return page("Edit my contact details", f"""<h1>Edit my contact details</h1>{err}<div class="card">
+<p class="muted">The line holder ({e(a["holder"])}) cannot be changed online.</p>
 <form method="post" action="/account/infos/modifier">
-{field("address", "Adresse (numéro et rue)")}{field("postcode", "Code postal")}{field("city", "Ville")}
-{field("email", "Adresse e-mail", "email")}{field("contact_phone", "Téléphone de contact")}
-<div class="actions"><button class="btn" type="submit">Enregistrer les modifications</button>
-<a class="btn grey" href="/account/infos">Annuler</a></div></form></div>""", a, "infos")
+{field("address", "Address (number and street)")}{field("postcode", "Postcode")}{field("city", "City")}
+{field("email", "Email address", "email")}{field("contact_phone", "Contact phone")}
+<div class="actions"><button class="btn" type="submit">Save changes</button>
+<a class="btn grey" href="/account/infos">Cancel</a></div></form></div>""", a, "infos")
 
 
 def p_simple(a: dict, title: str, active: str, text: str) -> str:
     return page(title, f'<h1>{e(title)}</h1><div class="card"><p>{text}</p></div>', a, active)
 
 
-# ---- serveur ----------------------------------------------------------------------
+# ---- server ----------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
     store: Store
     cookie_banner = True
     server_version = "ColetteDemo/1.0"
 
-    def log_message(self, fmt, *args):  # silencieux (les logs Colette suffisent)
+    def log_message(self, fmt, *args):  # silent (Colette's logs are enough)
         pass
 
-    # -- utilitaires
+    # -- helpers
     def _cookies(self) -> SimpleCookie:
         c = SimpleCookie()
         try:
@@ -489,23 +489,23 @@ class Handler(BaseHTTPRequestHandler):
             if m:
                 inv = next((i for i in invoices(a) if i["id"] == m.group(1)), None)
                 if inv is None:
-                    return self._send("Facture introuvable", 404, "text/plain; charset=utf-8")
-                self.store.log(f"facture {inv['id']} téléchargée")
+                    return self._send("Bill not found", 404, "text/plain; charset=utf-8")
+                self.store.log(f"bill {inv['id']} downloaded")
                 self.store.save()
                 return self._send(invoice_pdf(a, inv), 200, "application/pdf", {
-                    "Content-Disposition": f'attachment; filename="Facture_FreeMobile_{inv["id"]}.pdf"'})
+                    "Content-Disposition": f'attachment; filename="Bill_FreeMobile_{inv["id"]}.pdf"'})
             if path == "/account/infos":
                 return self._page(p_infos(a, ok="ok" in q))
             if path == "/account/infos/modifier":
                 return self._page(p_modifier(a))
             if path == "/account/options":
-                return self._page(p_simple(a, "Mes options", "options",
-                                           "Aucune option active sur votre ligne. Les options seront bientôt disponibles ici."))
+                return self._page(p_simple(a, "My options", "options",
+                                           "No active options on your line. Options will be available here soon."))
             if path == "/account/aide":
-                return self._page(p_simple(a, "Assistance", "aide",
-                                           "Besoin d'aide ? Appelez le 3244 (service gratuit + prix d'un appel)."))
-        self._page(page("Page introuvable", "<div class='card'><h1>Page introuvable</h1>"
-                        "<a href='/account/'>Retour à l'accueil</a></div>", a if self._logged_in() else None), 404)
+                return self._page(p_simple(a, "Help", "aide",
+                                           "Need help? Call 3244 (free service + price of a call)."))
+        self._page(page("Page not found", "<div class='card'><h1>Page not found</h1>"
+                        "<a href='/account/'>Back to home</a></div>", a if self._logged_in() else None), 404)
 
     def do_POST(self):
         path = urlparse(self.path).path.rstrip("/")
@@ -517,7 +517,7 @@ class Handler(BaseHTTPRequestHandler):
             if f.get("login", "").replace(" ", "") == DEMO_LOGIN and f.get("password") == DEMO_PASSWORD:
                 age = "; Max-Age=2592000" if f.get("remember") else ""
                 return self._redirect(nxt, f"fm_session={self.store.token()}; Path=/; HttpOnly; SameSite=Lax{age}")
-            return self._page(p_login("Identifiant ou mot de passe incorrect.", nxt), 401)
+            return self._page(p_login("Incorrect ID or password.", nxt), 401)
         if not self._logged_in():
             return self._redirect("/account/login")
 
@@ -527,27 +527,27 @@ class Handler(BaseHTTPRequestHandler):
                 key = f.get("offre", "")
                 if key in PLANS and key != a["plan"]:
                     a["pending_plan"] = key
-                    self.store.log(f"changement de forfait vers {PLANS[key]['name']}")
+                    self.store.log(f"plan changed to {PLANS[key]['name']}")
                     self.store.save()
                 return self._redirect("/account/forfait/confirmation")
             if path == "/account/infos/modifier":
                 v = {k: f.get(k, "") for k in ("address", "postcode", "city", "email", "contact_phone")}
                 error = ""
                 if not all(v.values()):
-                    error = "Tous les champs sont obligatoires."
+                    error = "All fields are required."
                 elif not re.fullmatch(r"\d{5}", v["postcode"]):
-                    error = "Le code postal doit contenir 5 chiffres."
+                    error = "The postcode must contain 5 digits."
                 elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v["email"]):
-                    error = "L'adresse e-mail n'est pas valide."
+                    error = "The email address is not valid."
                 elif not re.fullmatch(r"(?:\+33|0)\d{9}", re.sub(r"[\s.\-]", "", v["contact_phone"])):
-                    error = "Le numéro de téléphone n'est pas valide."
+                    error = "The phone number is not valid."
                 if error:
                     return self._page(p_modifier(a, v, error), 400)
                 a.update(v)
-                self.store.log("coordonnées modifiées")
+                self.store.log("contact details updated")
                 self.store.save()
                 return self._redirect("/account/infos?ok=1")
-        self._send("Introuvable", 404, "text/plain; charset=utf-8")
+        self._send("Not found", 404, "text/plain; charset=utf-8")
 
 
 def make_server(port: int = DEFAULT_PORT, host: str = "localhost", cookie_banner: bool = True,
@@ -559,7 +559,7 @@ def make_server(port: int = DEFAULT_PORT, host: str = "localhost", cookie_banner
 
 
 def start_in_thread(port: int = DEFAULT_PORT, cookie_banner: bool = True) -> tuple[ThreadingHTTPServer, str]:
-    """Démarre la maquette en tâche de fond. Renvoie (serveur, URL de l'espace abonné)."""
+    """Starts the mock-up in the background. Returns (server, customer area URL)."""
     server = make_server(port, cookie_banner=cookie_banner)
     threading.Thread(target=server.serve_forever, name="demo-site", daemon=True).start()
     return server, f"http://localhost:{port}/account/"

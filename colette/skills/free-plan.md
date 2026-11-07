@@ -1,11 +1,11 @@
 ---
 name: free-plan
 description: Use when the person wants to change their Free Mobile plan (changer de forfait, passer à un forfait moins cher ou plus grand) in the Free Mobile customer area.
-label: Mon forfait
-ask: Je voudrais changer de forfait.
-keywords: forfait | abonnement | offre
-steps_view: Ouvrir votre espace abonné | Vous connecter | Voir votre forfait actuel
-steps: Ouvrir votre espace abonné | Vous connecter | Trouver les forfaits | Choisir le forfait avec vous | Valider avec votre accord
+label: My plan
+ask: I'd like to change my plan.
+keywords: plan | subscription | offer | forfait
+steps_view: Open your customer area | Log in | See your current plan
+steps: Open your customer area | Log in | Find the plans | Choose the plan with you | Confirm with your approval
 order: 2
 ---
 # Change the Free Mobile plan (changer de forfait)
@@ -13,8 +13,8 @@ order: 2
 ## Where
 - https://mobile.free.fr/account/ → "Mon compte" → "Changer de forfait"
   (some pages show it under "Mon compte" → "Mon offre" → "Changer de forfait").
-- Si une connexion, un mot de passe ou un code SMS est demandé, appelle `ask_user` pour que la
-  personne le tape elle-même, puis attends. Never type an identifier, password or code yourself.
+- If a login, a password or a text-message code is requested, call `ask_user` so the
+  person types it herself, then wait. Never type an identifier, password or code yourself.
 
 ## Steps
 1. Write down the current plan shown on the page.
