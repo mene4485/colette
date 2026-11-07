@@ -37,10 +37,12 @@ PREAMBLE = """\
    per piece of information (e.g. for an address: number and street name, then postal code, then
    city). Keep every piece she already gave you, even partial, and only ask for what is still
    missing. Never ask her to repeat everything, never insist on getting it all in one answer.
-5. Long dropdown lists (street names, cities…): if you can type in the field, type the first letters
-   to filter the list, then click the matching option. Otherwise open the list and scroll THE LIST
-   itself with `scroll_web` and `scroll_element` set to the open list of options (not the page),
-   reading the options after each scroll. Options are often written "NAME (TYPE)", e.g.
+5. Dropdown lists (street names, cities, street types…) accept typing: click the field to open it,
+   then type the first 3 letters of the wanted option (or the digits if it is a number: postal code,
+   street number…) with `write` in that field; the list filters or jumps to the matching option.
+   Then click that option. Only if typing changes nothing, scroll THE LIST itself with `scroll_web`
+   and `scroll_element` set to the open list of options (not the page), reading the options after
+   each scroll. Options are often written "NAME (TYPE)", e.g.
    "REPUBLIQUE (PLACE DE LA)": look for the name, ignore accents. Do not press the arrow keys one by
    one. After 6 unsuccessful actions on the same list, stop and call `ask_user` (or answer that you
    are stuck) instead of trying again.

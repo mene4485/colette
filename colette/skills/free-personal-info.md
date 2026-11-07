@@ -42,7 +42,9 @@ complete a value yourself.
    (number and street name, then postal code, then city), keeping what the person already said.
    Fill the form in its order: "Code postal" (type it), "Ville" (list), "Type de voie" (list: RUE,
    PLACE, AVENUE, BOULEVARD…), "Nom de voie" (long list written "NAME (TYPE)", e.g.
-   "REPUBLIQUE (PLACE DE LA)": type the first letters of the name, or scroll the list itself),
+   "REPUBLIQUE (PLACE DE LA)"). Every list accepts typing: click it, type the first 3 letters
+   (e.g. "REP" for République, "PLA" for PLACE) or the digits of a number, then click the match;
+   scroll the list itself only if typing does nothing),
    then the street number. Check each field.
 3. When the page asks to re-enter the password: appelle `ask_user` pour que la personne le tape
    elle-même, puis attends.
