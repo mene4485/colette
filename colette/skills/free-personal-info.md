@@ -2,6 +2,8 @@
 name: free-personal-info
 description: Use when the person wants to change their contact email address or postal address (coordonnées, infos personnelles) in the Free Mobile customer area.
 label: Modifier mes coordonnées
+keywords: coordonnées | coordonnees | adresse | e-mail | email | mail | informations personnelles
+steps: Ouvrir votre espace abonné | Vous connecter | Ouvrir vos informations personnelles | Modifier vos coordonnées | Valider avec votre accord
 order: 3
 ---
 # Change personal details (coordonnées) in the Free Mobile customer area

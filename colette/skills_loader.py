@@ -10,7 +10,8 @@ Chaque fichier commence par un front matter :
 
 Aucune liste en dur : tout fichier `.md` déposé dans le dossier est envoyé à l'agent.
 Champs facultatifs (bulle seulement, jamais envoyés à H) : `label` (raccourci de l'écran 2,
-en français) et `order` (tri des raccourcis).
+en français), `order` (tri des raccourcis), `keywords` et `steps` (séparés par « | ») : plan
+affiché dès le début quand un mot-clé apparaît dans l'objectif de la démarche.
 """
 
 from __future__ import annotations
@@ -86,3 +87,22 @@ def list_shortcuts(directory: Path = SKILLS_DIR) -> list[dict]:
                 order = 99
             items.append((order, {"id": meta.get("name") or path.stem, "label": meta["label"]}))
     return [item for _, item in sorted(items, key=lambda x: (x[0], x[1]["label"]))]
+
+
+def match_plan(objectif: str, directory: Path = SKILLS_DIR) -> "tuple[str, list[str]] | None":
+    """(skill, étapes) du premier skill dont un mot-clé apparaît dans l'objectif, sinon None."""
+    text = (objectif or "").lower()
+    best = None
+    for path in sorted(directory.glob("*.md")):
+        try:
+            meta, _ = _front_matter(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        keywords = [k.strip().lower() for k in meta.get("keywords", "").split("|") if k.strip()]
+        steps = [st.strip() for st in meta.get("steps", "").split("|") if st.strip()]
+        if not steps:
+            continue
+        pos = min((text.find(k) for k in keywords if k in text), default=-1)
+        if pos >= 0 and (best is None or pos < best[0]):  # le mot-clé cité en premier gagne
+            best = (pos, meta.get("name") or path.stem, steps)
+    return (best[1], best[2]) if best else None

@@ -48,6 +48,7 @@ class ColetteState:
     # {"kind": "success|stopped|refused|failed", "title", "text", "summary": [str], "nothing_changed": bool}
     outcome: Optional[dict] = None
     shortcuts: list[dict] = field(default_factory=list)  # [{"id": skill, "label": str}] (écran 2)
+    transcript: list[dict] = field(default_factory=list)  # [{"who": "colette|vous", "text": str}] (6 dernières)
 
 
 class StateServer:
@@ -112,6 +113,16 @@ class StateServer:
 
     def set_subtitle(self, text: str) -> None:
         self.update(subtitle=text)
+
+    def add_line(self, who: str, text: str) -> None:
+        """Ajoute une phrase à la transcription affichée (petites lignes sous les étapes)."""
+        text = " ".join((text or "").split())
+        if not text:
+            return
+        lines = self.state.transcript
+        if lines and lines[-1] == {"who": who, "text": text}:
+            return
+        self.update(transcript=(lines + [{"who": who, "text": text}])[-6:])
 
     def set_steps(self, labels: list[str]) -> None:
         self.update(steps=[{"label": label, "state": "todo"} for label in labels])

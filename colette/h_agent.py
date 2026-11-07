@@ -268,7 +268,14 @@ class DemarcheRunner:
                 ou une confirmation avant une action irréversible."""
                 await _maybe_await(on_step(Step(text=question, kind="question")))
                 answer = await ask_user(question)
-                return answer or "(pas de réponse)"
+                # La page a pu changer pendant l'attente (la personne s'est connectée, a cliqué…) :
+                # sa dernière capture est périmée. Constaté au vrai run : Holo recliquait sur
+                # « Se connecter » alors que la personne était déjà connectée.
+                return (f"{answer or '(pas de réponse)'}\n"
+                        "Attention : la page a pu changer pendant que tu attendais (la personne a pu se "
+                        "connecter ou cliquer elle-même). Avant toute autre action, fais wait_web 1 seconde "
+                        "pour voir la page à jour, puis décide à partir de cette nouvelle capture ; ne "
+                        "reclique pas sur « Se connecter » si la personne est déjà connectée.")
 
             tools.append(tool(ask_user_tool, name="ask_user"))
 

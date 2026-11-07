@@ -42,7 +42,10 @@ from pipecat.frames.frames import (
     Frame,
     InputAudioRawFrame,
     InterimTranscriptionFrame,
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
     LLMMessagesAppendFrame,
+    LLMTextFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
     TTSTextFrame,
@@ -66,10 +69,10 @@ from pipecat.workers.runner import WorkerRunner
 
 from colette.audio_local import LocalAudioTransport, LocalAudioTransportParams
 from colette.h_agent import VALIDATE_STEP, Step, split_confirmation
-from colette.intents import is_noise, parse_intent
+from colette.intents import is_login_done, is_login_question, is_noise, parse_intent
 from colette.narration import Narrator
 from colette.prompts import CONFIRMED_FOLLOW_UP, GREETING, H_GOAL_TEMPLATE, SYSTEM_PROMPT
-from colette.skills_loader import list_shortcuts
+from colette.skills_loader import list_shortcuts, match_plan
 from colette.state import StateServer
 
 DEFAULT_LLM_MODEL = "google/gemini-2.5-flash"
@@ -196,6 +199,10 @@ class VoiceGate(FrameProcessor):
                 logger.info("🎯 Pas de oui/non clair → rappel")
                 self._say_later("Dites simplement oui ou non.")
             return True
+        login_wait = self.pending and is_login_question(self._question)
+        if intent in ("pause", "resume") and login_wait:
+            logger.info("🔇 Connexion en cours, « {} » ignoré : {!r}", intent, text)
+            return True  # « attendez, je tape » : H attend déjà, rien à dire
         if intent in ("stop", "pause", "resume") and self.voice.working:
             logger.info("🎯 Intention « {} »", intent)
             self._dispatch({"type": intent})
@@ -203,13 +210,17 @@ class VoiceGate(FrameProcessor):
         if is_noise(text):  # bruit, « euh », « Merci. » fantôme sur l'écho : jamais au LLM
             if self.pending:
                 logger.info("🔇 Ignoré (bruit) pendant la question H : {!r}", text)
-                if not self._relanced:
+                if not self._relanced and not is_login_question(self._question):
                     self._relanced = True
                     self._say_later(f"Je n'ai pas bien entendu. {self._question}".strip())
             else:
                 logger.info("🔇 Ignoré (bruit) : {!r}", text)
             return True
         if self.pending:
+            if is_login_question(self._question) and not is_login_done(text):
+                # La personne tape ses identifiants : on attend « c'est bon » sans rien dire.
+                logger.info("🔇 Connexion en cours, ignoré : {!r}", text)
+                return True
             logger.info("↳ réponse à la question de l'agent H")
             self.resolve(text)
             return True
@@ -227,16 +238,35 @@ class VoiceGate(FrameProcessor):
                         return
                 elif self._capturing():
                     return
-            elif isinstance(frame, InterimTranscriptionFrame):
-                self.voice.on_user_interim((frame.text or "").strip())
-                if self._capturing():
-                    return
+            elif isinstance(frame, InterimTranscriptionFrame) and self._capturing():
+                return
             elif isinstance(frame, InputAudioRawFrame) and self._capturing():
                 # Pas de VAD côté agrégateur pendant une question H ou la carte OUI/NON :
                 # la réponse ne doit pas ouvrir un tour de parole pour le LLM.
                 frame = InputAudioRawFrame(
                     audio=bytes(len(frame.audio)), sample_rate=frame.sample_rate, num_channels=frame.num_channels
                 )
+        await self.push_frame(frame, direction)
+
+
+class LLMTap(FrameProcessor):
+    """Entre le LLM et le TTS : chaque réponse complète du LLM → une ligne de transcription."""
+
+    def __init__(self, voice: "ColetteVoice") -> None:
+        super().__init__(name="LLMTap")
+        self.voice = voice
+        self._parts: list[str] = []
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if direction == FrameDirection.DOWNSTREAM:
+            if isinstance(frame, LLMFullResponseStartFrame):
+                self._parts = []
+            elif isinstance(frame, LLMTextFrame):
+                self._parts.append(frame.text or "")
+            elif isinstance(frame, LLMFullResponseEndFrame):
+                self.voice.state.add_line("colette", "".join(self._parts))
+                self._parts = []
         await self.push_frame(frame, direction)
 
 
@@ -287,6 +317,7 @@ class ColetteVoice:
         self._narrated_seq = 0
         self._latest_step: Optional[tuple[int, Step, float]] = None
         self._plan_announced = False  # H a appelé annoncer_etapes → la narration n'ajoute plus d'étapes
+        self._fixed_plan = False  # plan tiré du skill, affiché dès le début : annoncer_etapes de H ignoré
         self._confirmations: list[tuple[str, bool]] = []  # confirm_change de cette démarche (résumé, oui ?)
         self._approved = False  # la personne a dit oui à une action pendant cette démarche
         self._last_objectif = ""
@@ -319,11 +350,8 @@ class ColetteVoice:
         self._last_user_final_at = time.monotonic()
         if not is_noise(text):  # « Merci. » fantôme, « euh » : pas affiché
             self.state.update(heard=text)
+            self.state.add_line("vous", text)
 
-    def on_user_interim(self, text: str) -> None:
-        """Transcription partielle → « Vous dites : … » dans la bulle (en direct)."""
-        if text and not is_noise(text) and self.mic_open() and text != self.state.state.heard:
-            self.state.update(heard=text)
 
     def on_bot_started(self) -> None:
         self.bot_speaking = True
@@ -398,6 +426,7 @@ class ColetteVoice:
             self.gate,
             aggregators.user(),
             llm,
+            LLMTap(self),
             tts,
             transport.output(),
             StateTap(self),
@@ -442,6 +471,7 @@ class ColetteVoice:
 
     # ---- parole ------------------------------------------------------------
     async def say(self, text: str, *, to_context: bool = False) -> None:
+        self.state.add_line("colette", text)
         if self.worker is not None:
             await self.worker.queue_frame(TTSSpeakFrame(text, append_to_context=to_context))
 
@@ -533,6 +563,7 @@ class ColetteVoice:
         self.paused = False
         self._stopped = False
         self._plan_announced = False
+        self._fixed_plan = False
         self._confirmations = []
         self._approved = False
         self._last_objectif = objectif
@@ -544,6 +575,15 @@ class ColetteVoice:
         speak = True  # le LLM résume-t-il ? (non : on a déjà tout dit nous-mêmes)
         try:
             goal = H_GOAL_TEMPLATE.format(objectif=objectif or "changer de forfait Free Mobile")
+            plan = match_plan(objectif)
+            if plan:  # toutes les étapes connues dès le début, affichées et lues une fois
+                skill, labels = plan
+                logger.info("📋 Plan du skill {} : {}", skill, labels)
+                await self._announce_plan(labels)
+                self._fixed_plan = True
+                numbered = "\n".join(f"{i}. {l}" for i, l in enumerate(labels, start=1))
+                goal += (f"\nÉtapes DÉJÀ annoncées à la personne (skill {skill}) — n'appelle pas annoncer_etapes, "
+                         f"appelle etape_terminee(numero) avec ces numéros à la fin de chaque étape :\n{numbered}\n")
             answer = await self.runner.run(
                 goal, on_step=self._on_step, ask_user=self._ask_user,
                 on_plan=self._on_plan, on_step_done=self._on_step_done, confirm=self._confirm_change,
@@ -603,6 +643,13 @@ class ColetteVoice:
 
     # ---- plan annoncé par H (annoncer_etapes / etape_terminee) ----------------
     async def _on_plan(self, labels: list[str]) -> None:
+        """Tool H annoncer_etapes. Ignoré si le plan du skill est déjà affiché (il ne doit pas bouger)."""
+        if self._fixed_plan:
+            logger.info("📋 annoncer_etapes ignoré (plan du skill déjà affiché) : {}", labels)
+            return
+        await self._announce_plan(labels)
+
+    async def _announce_plan(self, labels: list[str]) -> None:
         labels = [l.rstrip(" .") for l in labels]
         if labels and "accord" in labels[-1].lower() and labels[-1] != VALIDATE_STEP:
             labels[-1] = VALIDATE_STEP  # libellé imposé pour la dernière étape
@@ -756,17 +803,35 @@ class ColetteVoice:
 
     async def _ask_user(self, question: str) -> str:
         logger.info("❓ Agent H : {}", question)
+        self._narrated_seq = self._step_seq  # narration en attente jetée : elle date d'avant la question
+        login = is_login_question(question)
+        login_idx = self._step_index("connect") if login else None
+        if login_idx is not None:
+            self.state.complete_through(login_idx)  # « Vous connecter » en cours
         fut = self.gate.expect_answer(question)
         self.state.update(status="listening", subtitle=question, heard="")
         await self.say(question)
         try:
-            answer = await asyncio.wait_for(fut, ASK_TIMEOUT_S)
+            answer = await asyncio.wait_for(fut, ASK_TIMEOUT_S if not login else ASK_TIMEOUT_S * 2)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             answer = "(pas de réponse)"
+        self._narrated_seq = self._step_seq
+        self._last_narration = time.monotonic()  # pas de narration tout de suite : H regarde d'abord la page
+        if login_idx is not None and answer != "(pas de réponse)":
+            self.state.complete_through(login_idx + 1)
         if self.working and self.state.state.status == "listening":
             self.state.set_status("paused" if self.paused else "working")
         logger.info("↳ réponse transmise à H : {}", answer)
         return answer
+
+    def _step_index(self, word: str) -> Optional[int]:
+        """Index (0-based) de la première étape du plan dont le libellé contient `word`."""
+        if not self._plan_announced:
+            return None
+        for i, s in enumerate(self.state.state.steps):
+            if word in s["label"].lower():
+                return i
+        return None
 
     # ---- mode script (tests sans micro) -------------------------------------
     async def _wait_quiet(self, seconds: float = 2.0) -> None:

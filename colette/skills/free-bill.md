@@ -2,6 +2,8 @@
 name: free-bill
 description: Use when the person wants to see or download their latest Free Mobile bill (facture) from the Free Mobile customer area.
 label: Télécharger une facture
+keywords: facture | factures | pdf
+steps: Ouvrir votre espace abonné | Vous connecter | Trouver vos factures | Télécharger la dernière facture
 order: 1
 ---
 # Download the most recent Free Mobile bill

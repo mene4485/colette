@@ -45,8 +45,7 @@
     "@keyframes halo{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.7)}50%{box-shadow:0 0 0 9px rgba(255,255,255,0)}}",
     ".av{flex:none;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center}",
     ".av svg{width:78%;height:78%}",
-    /* ---- voile léger (écrans 2, 3, 6, 7, 10) et bandeau (écran 5) : sur la zone de la page ---- */
-    ".veil{position:fixed;left:0;top:0;bottom:0;right:" + PANEL_W + "px;background:rgba(15,23,42,.16);pointer-events:none!important}",
+    /* ---- bandeau (écran 5) sur la zone de la page ; jamais de voile : le site reste normal ---- */
     ".banner{position:fixed;left:0;top:0;right:" + PANEL_W + "px;height:" + BANNER_H + "px;background:" + BLUE + ";color:#fff;",
     "display:flex;align-items:center;gap:12px;padding:0 28px;font-size:18px;font-weight:700;pointer-events:none!important}",
     ".banner svg{width:24px;height:24px;flex:none}",
@@ -153,6 +152,20 @@
     "font-size:17px;font-weight:800;margin-top:18px}",
     ".okpill svg{width:20px;height:20px;flex:none}",
     ".q{font-size:18px;font-weight:800;color:" + INK + ";margin-top:22px}",
+    /* transcription : petites lignes sous le contenu figé, hauteur fixe (rien ne bouge au-dessus) */
+    ".body.col{display:flex;flex-direction:column;overflow:hidden}",
+    ".body.col>*{flex-shrink:0}",
+    /* écran 5 compact : titre, barre et étapes tiennent toujours ; la transcription prend le reste */
+    ".work h2{font-size:22px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}",
+    ".work .count{margin-top:14px}.work .steps{gap:10px;margin-top:14px}",
+    ".work .num{width:32px;height:32px;font-size:15px}.work .num svg{width:17px;height:17px}",
+    ".work .steps .lbl{font-size:17px}.work .steps small{font-size:13px;margin-top:1px}",
+    ".work .calm{margin-top:14px;font-size:16px}",
+    ".tr{margin-top:auto;padding-top:10px;height:104px;min-height:44px;flex-shrink:1!important;display:flex;flex-direction:column;justify-content:flex-end;",
+    "overflow:hidden;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 34px)}",
+    ".tr div{flex:none;font-size:14px;line-height:1.4;color:#94A3B8;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+    ".tr div:last-child{color:" + MUTED + ";white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}",
+    ".tr b{font-weight:700;margin-right:4px}",
     ".off{font-size:15px;color:#B42318;margin-top:14px;text-align:center}"
   ].join("");
 
@@ -263,7 +276,9 @@
   function render() {
     if (!root) return;
     var scr = screen();
-    var key = JSON.stringify([state, connected, hold && hold.action]);
+    // subtitle / heard (mot à mot) ne sont plus affichés : ils ne déclenchent pas de reconstruction
+    var shown = {}; for (var f in state) if (f !== "subtitle" && f !== "heard") shown[f] = state[f];
+    var key = JSON.stringify([shown, connected, hold && hold.action]);
     if (key === lastKey) return;  // rien n'a changé : pas de reconstruction
     lastKey = key;
     var wrap = root.getElementById("wrap");
@@ -290,8 +305,6 @@
       banner.appendChild(svg("eye"));
       banner.appendChild(el("span", null, "Colette utilise cette page pour vous. Vous pouvez regarder."));
       wrap.appendChild(banner);
-    } else {
-      wrap.appendChild(el("div", "veil"));
     }
     if (markBox) wrap.appendChild(markBox);
 
@@ -323,7 +336,7 @@
     }
     card.appendChild(head);
 
-    var body = el("div", "body");
+    var body = el("div", scr === "call" ? "body col" : scr === "working" ? "body col work" : "body");
     var foot = el("div", "foot");
     card.appendChild(body);
     ({ home: home, call: call, working: working, confirm: confirm, done: done, failed: failed })[scr](body, foot);
@@ -373,18 +386,7 @@
     c.appendChild(el("p", null, paused ? "Je n'écoute plus. Appuyez sur « Reprendre » quand vous voulez."
       : "Parlez normalement, prenez votre temps."));
     body.appendChild(c);
-    if (speaking && state.subtitle) {
-      var col = el("div", "said col");
-      col.appendChild(el("small", null, "Colette dit :"));
-      col.appendChild(el("div", null, state.subtitle));
-      body.appendChild(col);
-    }
-    if (state.heard) {
-      var said = el("div", "said");
-      said.appendChild(el("small", null, speaking ? "Vous avez dit :" : "Vous dites :"));
-      said.appendChild(el("div", null, "« " + state.heard + " »"));
-      body.appendChild(said);
-    }
+    transcript(body);
     var row = el("div", "row2");
     row.appendChild(button("sec", paused ? "Reprendre" : "Pause", paused ? "play" : "pause", function () {
       send({ type: paused ? "resume" : "pause" });
@@ -395,21 +397,24 @@
     foot.appendChild(row);
   }
 
+  // Transcription : les dernières phrases, une par ligne, en petit, sous le contenu figé.
+  function transcript(body) {
+    var lines = (state.transcript || []).slice(-5);
+    if (!lines.length) return;
+    var tr = el("div", "tr");
+    lines.forEach(function (l) {
+      var d = el("div");
+      d.appendChild(el("b", null, l.who === "vous" ? "Vous :" : "Colette :"));
+      d.appendChild(document.createTextNode(l.text));
+      tr.appendChild(d);
+    });
+    body.appendChild(tr);
+  }
+
   // ---- 5 · navigue (H agit) ----
   function working(body, foot) {
     var steps = state.steps || [];
     body.appendChild(el("h2", null, state.title || "Je m'occupe de votre demande"));
-    if (state.status === "listening" && state.subtitle) {  // question de l'agent H
-      var q = el("div", "said col");
-      q.appendChild(el("small", null, "Colette vous demande :"));
-      q.appendChild(el("div", null, state.subtitle));
-      body.appendChild(q);
-      var said = el("div", "said");
-      said.style.marginTop = "10px";
-      said.appendChild(el("small", null, "Vous dites :"));
-      said.appendChild(el("div", null, state.heard ? "« " + state.heard + " »" : "…"));
-      body.appendChild(said);
-    }
     if (steps.length) {
       var cur = 0;
       steps.forEach(function (s, i) { if (s.state === "doing") cur = i + 1; });
@@ -433,14 +438,11 @@
       });
       body.appendChild(ul);
     }
-    var asking = state.status === "listening" && state.subtitle;
-    if (asking) {
-      // question de l'agent H : en haut, toujours visible (la liste des étapes passe dessous)
-    } else if (state.status === "paused") {
-      body.appendChild(el("p", "calm", "Je suis en pause. Vous avez la main. Dites « continuez » ou maintenez « Reprendre »."));
-    } else {
+    if (state.status === "listening") body.appendChild(el("p", "calm", "À vous : j'attends votre réponse."));
+    else if (state.status === "paused") body.appendChild(el("p", "calm", "Je suis en pause. Vous avez la main."));
+    else if (!(state.transcript || []).length)
       body.appendChild(el("p", "calm", "Vous n'avez rien à faire. Je vous préviens si j'ai besoin de vous."));
-    }
+    transcript(body);
     var paused = state.status === "paused";
     var row = el("div", "row2");
     row.appendChild(holdable(button("sec", paused ? "Reprendre" : "Pause", paused ? "play" : "pause"), "pause"));

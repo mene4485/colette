@@ -2,6 +2,8 @@
 name: free-plan
 description: Use when the person wants to change their Free Mobile plan (changer de forfait, passer à un forfait moins cher ou plus grand) in the Free Mobile customer area.
 label: Changer de forfait
+keywords: forfait | abonnement | offre
+steps: Ouvrir votre espace abonné | Vous connecter | Trouver les forfaits | Choisir le forfait avec vous | Valider avec votre accord
 order: 2
 ---
 # Change the Free Mobile plan (changer de forfait)

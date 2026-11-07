@@ -19,6 +19,8 @@ FAKE_STEPS = [
     ("Je regarde les forfaits disponibles", 4.0),
 ]
 FAKE_QUESTION = "Je vois deux forfaits moins chers : le forfait à deux euros, ou celui à neuf euros quatre-vingt-dix-neuf. Lequel préférez-vous ?"
+FAKE_LOGIN = ("Il faut vous connecter. Tapez vous-même votre identifiant et votre mot de passe, je ne "
+              "regarde pas. Dites-moi « c'est bon » quand c'est fait.")
 FAKE_STEPS_AFTER = [
     ("Je sélectionne le forfait choisi", 3.0),
     ("J'ouvre la page de récapitulatif", 3.5),
@@ -38,7 +40,7 @@ class FakeDemarcheRunner:
     confirm (confirm_change) au récapitulatif : oui → « Valider » cliqué (simulé) dans la même phase,
     non → rien. Sans `confirm` (ou use_confirm_tool=False, env COLETTE_FAKE_LEGACY=1) : garde-fou deux
     phases, s'arrête au récapitulatif avec une ligne `CONFIRMATION: …` et follow_up() simule le clic.
-    Rien n'est jamais fait pour de vrai. `COLETTE_FAKE_FAIL=1` : échec après l'étape 2 (écran 10).
+    Rien n'est jamais fait pour de vrai. `COLETTE_FAKE_FAIL=1` : échec après l'étape 2 (écran 10). `COLETTE_FAKE_LOGIN=1` : question de connexion.
     """
 
     def __init__(self, speed: float = 1.0, use_confirm_tool: Optional[bool] = None) -> None:
@@ -93,6 +95,9 @@ class FakeDemarcheRunner:
             await _maybe_await(on_step(Step(text=text, url=url)))
             if i == 0:
                 await done(1)
+                if ask_user is not None and os.getenv("COLETTE_FAKE_LOGIN", "") in ("1", "true"):
+                    await _maybe_await(on_step(Step(text=FAKE_LOGIN, kind="question")))
+                    logger.info("[fake] réponse connexion : {}", await ask_user(FAKE_LOGIN))
         await done(2)
         if os.getenv("COLETTE_FAKE_FAIL", "") in ("1", "true"):
             self.status = "failed"

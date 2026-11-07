@@ -91,3 +91,18 @@ def is_noise(text: str) -> bool:
     if _has(norm, HALLUCINATIONS):
         return True
     return all(w in FILLERS for w in norm.split())
+
+
+# Réponse « c'est fait » à une question de connexion (la personne tape elle-même ses identifiants).
+LOGIN_DONE = ("c est bon", "c est fait", "voila", "ok", "okay", "d accord", "je suis connecte",
+              "je suis connectee", "connecte", "connectee", "ca y est", "c bon", "termine", "fini",
+              "j ai fini", "oui", "c est ok", "vas y", "allez y", "continue", "continuez", "go")
+
+
+def is_login_question(question: str) -> bool:
+    norm = normalize(question)
+    return "connecter" in norm or "mot de passe" in norm or "identifiant" in norm
+
+
+def is_login_done(text: str) -> bool:
+    return _has(normalize(text), LOGIN_DONE)
