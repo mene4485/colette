@@ -161,8 +161,10 @@ class VoiceGate(FrameProcessor):
             fut.cancel()
 
     def _capturing(self) -> bool:
-        """Vrai quand la voix ne doit pas ouvrir de tour de parole pour le LLM."""
-        return self.pending or self.voice.state.confirm_pending
+        """Vrai quand la voix ne doit pas ouvrir de tour de parole pour le LLM.
+        Pendant une démarche, rien ne va au LLM : il répondait « je m'occupe déjà de… » à chaque
+        bruit ou phrase captée (seuls stop / pause / reprise et les réponses à H passent)."""
+        return self.pending or self.voice.state.confirm_pending or self.voice.working
 
     def _dispatch(self, msg: dict) -> None:
         """Même chemin que les boutons de la bulle (StateServer.handle_message → callbacks)."""
@@ -224,6 +226,9 @@ class VoiceGate(FrameProcessor):
                 return True
             logger.info("↳ réponse à la question de l'agent H")
             self.resolve(text)
+            return True
+        if self.voice.working:
+            logger.info("🔇 Démarche en cours, pas envoyé au LLM : {!r}", text)
             return True
         return False
 
