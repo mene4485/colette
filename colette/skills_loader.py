@@ -9,6 +9,8 @@ Chaque fichier commence par un front matter :
     # Corps markdown (la procédure)
 
 Aucune liste en dur : tout fichier `.md` déposé dans le dossier est envoyé à l'agent.
+Champs facultatifs (bulle seulement, jamais envoyés à H) : `label` (raccourci de l'écran 2,
+en français) et `order` (tri des raccourcis).
 """
 
 from __future__ import annotations
@@ -33,8 +35,7 @@ PREAMBLE = """\
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
-def parse_skill(text: str, fallback_name: str) -> dict:
-    """Front matter `name` / `description` + corps. Lève ValueError si incomplet."""
+def _front_matter(text: str) -> tuple[dict[str, str], str]:
     meta: dict[str, str] = {}
     body = text
     if text.startswith("---"):
@@ -43,6 +44,12 @@ def parse_skill(text: str, fallback_name: str) -> dict:
             if ":" in line:
                 key, value = line.split(":", 1)
                 meta[key.strip().lower()] = value.strip().strip("\"'")
+    return meta, body
+
+
+def parse_skill(text: str, fallback_name: str) -> dict:
+    """Front matter `name` / `description` + corps. Lève ValueError si incomplet."""
+    meta, body = _front_matter(text)
     name = meta.get("name") or fallback_name
     description = meta.get("description", "")
     body = body.strip()
@@ -61,3 +68,21 @@ def load_skills(directory: Path = SKILLS_DIR) -> list[dict]:
         except Exception as e:
             logger.warning("Skill ignoré ({}) : {}", path.name, e)
     return skills
+
+
+def list_shortcuts(directory: Path = SKILLS_DIR) -> list[dict]:
+    """Raccourcis de la bulle : [{"id": name, "label": str}] pour chaque skill qui a un `label`."""
+    items = []
+    for path in directory.glob("*.md"):
+        try:
+            meta, _ = _front_matter(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("Skill illisible ({}) : {}", path.name, e)
+            continue
+        if meta.get("label"):
+            try:
+                order = int(meta.get("order", "99"))
+            except ValueError:
+                order = 99
+            items.append((order, {"id": meta.get("name") or path.stem, "label": meta["label"]}))
+    return [item for _, item in sorted(items, key=lambda x: (x[0], x[1]["label"]))]

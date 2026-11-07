@@ -69,6 +69,7 @@ from colette.h_agent import VALIDATE_STEP, Step, split_confirmation
 from colette.intents import is_noise, parse_intent
 from colette.narration import Narrator
 from colette.prompts import CONFIRMED_FOLLOW_UP, GREETING, H_GOAL_TEMPLATE, SYSTEM_PROMPT
+from colette.skills_loader import list_shortcuts
 from colette.state import StateServer
 
 DEFAULT_LLM_MODEL = "google/gemini-2.5-flash"
@@ -77,12 +78,27 @@ ECHO_TAIL_S = 0.4  # micro encore coupé juste après que Colette s'est tue
 ASK_TIMEOUT_S = 180.0
 CONFIRM_TIMEOUT_S = 120.0  # sans réponse → on ne valide pas
 REMIND_GAP_S = 4.0  # « Dites simplement oui ou non. » au plus toutes les 4 s
+ADVISOR_TEXT = ("Vous pouvez appeler le service client Free Mobile au trois, deux, quatre, quatre, "
+                "depuis votre téléphone Free. Je reste là si vous avez besoin de moi.")
 
 _URL_RE = re.compile(r"https?://\S+")
 
 
 def _lower_first(text: str) -> str:
     return text[:1].lower() + text[1:] if text[:2] != text[:2].upper() else text
+
+
+def _confirm_card(action: str, costs_money: bool) -> dict:
+    """Carte d'accord (écran 6) : « passer au forfait à 2 €, à partir du 1er décembre » →
+    titre « Passer au forfait à 2 € ? », puces « À partir du 1er décembre. » (+ prix), « Oui, passer »."""
+    head, _, rest = action.partition(",")
+    head = head.strip() or action
+    bullets = [p.strip()[:1].upper() + p.strip()[1:] + "." for p in rest.split(",") if p.strip()]
+    if costs_money:
+        bullets.append("Cela change ce que vous payez.")
+    verb = head.split()[0].lower() if head.split() else "valider"
+    return {"title": head[:1].upper() + head[1:] + " ?", "bullets": bullets[:3],
+            "yes": f"Oui, {verb}", "no": "Non, ne rien changer"}
 
 
 def _env_flag(name: str) -> bool:
@@ -211,8 +227,10 @@ class VoiceGate(FrameProcessor):
                         return
                 elif self._capturing():
                     return
-            elif isinstance(frame, InterimTranscriptionFrame) and self._capturing():
-                return
+            elif isinstance(frame, InterimTranscriptionFrame):
+                self.voice.on_user_interim((frame.text or "").strip())
+                if self._capturing():
+                    return
             elif isinstance(frame, InputAudioRawFrame) and self._capturing():
                 # Pas de VAD côté agrégateur pendant une question H ou la carte OUI/NON :
                 # la réponse ne doit pas ouvrir un tour de parole pour le LLM.
@@ -270,6 +288,9 @@ class ColetteVoice:
         self._latest_step: Optional[tuple[int, Step, float]] = None
         self._plan_announced = False  # H a appelé annoncer_etapes → la narration n'ajoute plus d'étapes
         self._confirmations: list[tuple[str, bool]] = []  # confirm_change de cette démarche (résumé, oui ?)
+        self._approved = False  # la personne a dit oui à une action pendant cette démarche
+        self._last_objectif = ""
+        self._was_greeted_call = False
         self._narr_task: Optional[asyncio.Task] = None
         self._demarche_task: Optional[asyncio.Task] = None
         self._started = asyncio.Event()
@@ -279,11 +300,15 @@ class ColetteVoice:
         self.gate = VoiceGate(self)
         self.narrator = Narrator()
         state.on_client_message(self.on_client_message)
+        state.update(shortcuts=list_shortcuts())
 
     # ---- état partagé entre processeurs ------------------------------------
     def mic_open(self) -> bool:
-        if not self.state.state.open:
+        st = self.state.state
+        if not st.open or not (st.call or st.busy):
             return False
+        if st.status == "paused" and not self.working:
+            return False  # « Pause » pendant l'appel : Colette n'écoute plus
         if self.barge_in:
             return True
         if self.bot_speaking:
@@ -292,7 +317,13 @@ class ColetteVoice:
 
     def on_user_final(self, text: str) -> None:
         self._last_user_final_at = time.monotonic()
-        self.state.set_subtitle(f"« {text} »")
+        if not is_noise(text):  # « Merci. » fantôme, « euh » : pas affiché
+            self.state.update(heard=text)
+
+    def on_user_interim(self, text: str) -> None:
+        """Transcription partielle → « Vous dites : … » dans la bulle (en direct)."""
+        if text and not is_noise(text) and self.mic_open() and text != self.state.state.heard:
+            self.state.update(heard=text)
 
     def on_bot_started(self) -> None:
         self.bot_speaking = True
@@ -404,7 +435,7 @@ class ColetteVoice:
         await self._started.wait()
         if self.auto_open:
             await asyncio.sleep(1.0)
-            self.state.set_open(True)
+            self.state.update(open=True, call=True, status="listening")
             await self.greet()
         if self.script:
             await self._play_script()
@@ -426,9 +457,37 @@ class ColetteVoice:
     async def on_client_message(self, msg: dict) -> None:
         t = msg.get("type")
         running = self._demarche_task is not None and not self._demarche_task.done()
-        if t == "open":
+        if t == "call":
             if self._started.is_set():
-                await self.greet()
+                if not self.greeted:
+                    await self.greet()
+                else:
+                    self.state.set_subtitle("Je vous écoute.")
+                    await self.say("Je vous écoute.")
+        elif t == "shortcut":
+            label = next((s["label"] for s in self.state.state.shortcuts if s["id"] == msg.get("id")), "")
+            if label and not running:
+                request = f"Je voudrais {_lower_first(label)}."
+                self.greeted = True  # pas d'accueil par-dessus : la demande part tout de suite
+                self.state.update(heard=request)
+                logger.info("🔘 Raccourci {} → {!r}", msg.get("id"), request)
+                await self._ask_llm(request)
+        elif t in ("hangup", "close", "later"):
+            if running and not self._stopped:
+                await self.state.handle_message({"type": "stop", "source": t})
+            elif t == "hangup":
+                await self.say("Au revoir, à bientôt.")
+        elif t == "reset":
+            if not running:
+                await self.say("Que puis-je faire d'autre pour vous ?")
+        elif t == "replay":
+            await self.say(self._outcome_speech())
+        elif t == "advisor":
+            await self.say(ADVISOR_TEXT)
+        elif t == "retry":
+            if not running and self._last_objectif:
+                self.state.update(outcome=None, call=True, open=True)
+                await self._ask_llm(f"Réessaie une fois la même démarche : {self._last_objectif}")
         elif t == "stop":
             self.gate.cancel_pending()
             if running and not self._stopped:
@@ -475,7 +534,11 @@ class ColetteVoice:
         self._stopped = False
         self._plan_announced = False
         self._confirmations = []
-        self.state.update(steps=[], status="working", open=True)
+        self._approved = False
+        self._last_objectif = objectif
+        title = (objectif or "Votre démarche").rstrip(" .")
+        self.state.update(steps=[], status="working", open=True, busy=True, outcome=None,
+                          title=title[:1].upper() + title[1:], heard="")
         self.state.add_step("Comprendre votre demande")
         result: dict
         speak = True  # le LLM résume-t-il ? (non : on a déjà tout dit nous-mêmes)
@@ -498,7 +561,7 @@ class ColetteVoice:
                 self.state.finish_steps()
                 statut = "validé avec l'accord oral de la personne" if asked else "terminé"
                 result = {"statut": statut, "resultat": body or "(l'agent n'a rien répondu)"}
-            elif asked is not None or await self._confirm(action):
+            elif asked is not None or await self._approve(action):
                 # Garde-fou deux phases : H s'est arrêté au récapitulatif. Si la personne a déjà dit
                 # oui via confirm_change, on ne redemande pas.
                 self._start_validate_step()
@@ -531,7 +594,8 @@ class ColetteVoice:
                 await self.runner.close()
             except Exception as e:
                 logger.warning("Fermeture de la session H : {}", e)
-            self.state.set_status("done")
+            self.state.update(status="done", busy=False)
+        self.state.update(outcome=self._outcome(result))
         result["suite"] = ("Cette démarche est terminée. Si la personne demande une nouvelle démarche, "
                            "reformule puis rappelle run_demarche normalement.")
         logger.info("🛠️  run_demarche → {}", result)
@@ -578,9 +642,54 @@ class ColetteVoice:
         if self._stopped:
             return False
         self._start_validate_step()
-        ok = await self._confirm(summary or "valider cette action", costs_money=costs_money)
+        ok = await self._approve(summary or "valider cette action", costs_money=costs_money)
         self._confirmations.append((summary, ok))
         return ok and not self._stopped
+
+    async def _approve(self, action: str, *, costs_money: bool = False) -> bool:
+        ok = await self._confirm(action, costs_money=costs_money)
+        if ok and not self._stopped:
+            self._approved = True  # à partir d'ici, le compte a pu être modifié
+        return ok
+
+    # ---- écrans de fin (7 terminé / arrêté / refusé, 10 échec) ------------------
+    def _outcome(self, result: dict) -> dict:
+        statut = result.get("statut", "")
+        nothing_changed = not self._approved
+        if statut.startswith("échec"):
+            return {"kind": "failed", "title": "Je n'ai pas pu terminer",
+                    "text": "Le site ne répond pas comme prévu.", "summary": [], "nothing_changed": nothing_changed}
+        if statut.startswith("arrêtée"):
+            return {"kind": "stopped", "title": "D'accord, j'ai arrêté",
+                    "text": "Je me suis arrêtée à votre demande.", "summary": [], "nothing_changed": nothing_changed}
+        if statut.startswith("non validé"):
+            return {"kind": "refused", "title": "Rien n'a été changé",
+                    "text": "Vous avez dit non : je n'ai rien validé.", "summary": [], "nothing_changed": True}
+        text = _URL_RE.sub("la page", str(result.get("resultat") or "")).strip()
+        if text.startswith("("):
+            text = ""
+        summary = [s["label"] for s in self.state.state.steps
+                   if s["state"] == "done" and s["label"] != "Comprendre votre demande"]
+        return {"kind": "success", "title": "C'est fait !", "text": text, "summary": summary[-6:],
+                "nothing_changed": False}
+
+    def _outcome_speech(self) -> str:
+        o = self.state.state.outcome
+        if not o:
+            return "Je n'ai rien fait pour l'instant. Que puis-je faire pour vous ?"
+        parts = [o.get("title", "").rstrip(" !.") + ".", o.get("text", "")]
+        if o.get("summary"):
+            parts.append("Voici ce que j'ai fait : " + " ; ".join(_lower_first(s) for s in o["summary"]) + ".")
+        if o.get("kind") != "success" and o.get("nothing_changed"):
+            parts.append("Rien n'a été modifié sur votre compte.")
+        return " ".join(p for p in parts if p)
+
+    async def _ask_llm(self, text: str) -> None:
+        """Envoie une phrase au LLM comme si la personne l'avait dite."""
+        if self.worker is not None:
+            await self.worker.queue_frame(
+                LLMMessagesAppendFrame(messages=[{"role": "user", "content": text}], run_llm=True)
+            )
 
     async def _confirm(self, action: str, *, costs_money: bool = False) -> bool:
         """Carte OUI/NON + question orale. Seul un oui explicite (voix ou bouton) renvoie True."""
@@ -589,7 +698,7 @@ class ColetteVoice:
         money = " Attention, cela change ce que vous payez." if costs_money else ""
         question = f"Je m'apprête à {_lower_first(action)}.{money} Je valide ? Dites oui ou non."
         logger.info("✋ Confirmation demandée : {}", action)
-        fut = self.state.ask_confirm(card)
+        fut = self.state.ask_confirm(card, **_confirm_card(action, costs_money))
         await self.say(question)
         try:
             ok = bool(await asyncio.wait_for(fut, CONFIRM_TIMEOUT_S))
@@ -648,8 +757,7 @@ class ColetteVoice:
     async def _ask_user(self, question: str) -> str:
         logger.info("❓ Agent H : {}", question)
         fut = self.gate.expect_answer(question)
-        self.state.set_status("listening")
-        self.state.set_subtitle(question)
+        self.state.update(status="listening", subtitle=question, heard="")
         await self.say(question)
         try:
             answer = await asyncio.wait_for(fut, ASK_TIMEOUT_S)

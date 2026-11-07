@@ -10,7 +10,8 @@ Deux transports :
 - WebSocket ws://localhost:8765 (secours : maquette servie en localhost, outils de debug).
 
 Serveur → bulle : {"type": "state", "state": {...}} à chaque changement et à chaque connexion.
-Bulle → serveur : {"type": "open"|"close"|"stop"|"pause"|"resume"} ou {"type": "confirm", "value": bool}.
+Bulle → serveur : {"type": "open"|"close"|"call"|"hangup"|"stop"|"pause"|"resume"|"reset"|"replay"
+|"retry"|"advisor"|"later"}, {"type": "confirm", "value": bool} ou {"type": "shortcut", "id": "<skill>"}.
 """
 
 from __future__ import annotations
@@ -37,8 +38,16 @@ class ColetteState:
     open: bool = False
     status: str = "idle"
     steps: list[dict] = field(default_factory=list)  # [{"label": str, "state": "todo|doing|done"}]
-    subtitle: str = ""
-    confirm: Optional[dict] = None  # {"text": str}
+    subtitle: str = ""  # ce que dit Colette (mots Cartesia) ou la question de l'agent H
+    # {"text", "title", "bullets": [str], "yes", "no"} — carte d'accord (écran 6)
+    confirm: Optional[dict] = None
+    call: bool = False  # appel en cours (écran 3) : micro ouvert, conversation continue
+    busy: bool = False  # démarche en cours : l'agent H agit sur la page (écran 5)
+    heard: str = ""  # transcription en direct de la personne (« Vous dites : … »)
+    title: str = ""  # titre de la démarche en cours
+    # {"kind": "success|stopped|refused|failed", "title", "text", "summary": [str], "nothing_changed": bool}
+    outcome: Optional[dict] = None
+    shortcuts: list[dict] = field(default_factory=list)  # [{"id": skill, "label": str}] (écran 2)
 
 
 class StateServer:
@@ -151,12 +160,15 @@ class StateServer:
     def confirm_pending(self) -> bool:
         return self._confirm_future is not None and not self._confirm_future.done()
 
-    def ask_confirm(self, text: str) -> asyncio.Future[bool]:
-        """Affiche la carte OUI/NON ; la Future se résout au clic (ou via resolve_confirm)."""
+    def ask_confirm(self, text: str, *, title: str = "", bullets: Optional[list[str]] = None,
+                    yes: str = "", no: str = "") -> asyncio.Future[bool]:
+        """Affiche la carte d'accord ; la Future se résout au clic (ou via resolve_confirm)."""
         self.resolve_confirm(False)  # une seule question à la fois
         self._confirm_future = asyncio.get_running_loop().create_future()
         self._status_before_confirm = self.state.status
-        self.update(confirm={"text": text}, status="awaiting_confirm", open=True)
+        card = {"text": text, "title": title or text, "bullets": list(bullets or []),
+                "yes": yes or "Oui, je suis d'accord", "no": no or "Non, ne rien changer"}
+        self.update(confirm=card, status="awaiting_confirm", open=True)
         return self._confirm_future
 
     def resolve_confirm(self, value: bool) -> None:
@@ -196,14 +208,22 @@ class StateServer:
         logger.info("Bulle → {}", json.dumps(msg, ensure_ascii=False))
         if mtype == "open":
             self.set_open(True)
-        elif mtype == "close":
-            self.set_open(False)
+        elif mtype in ("close", "later"):
+            self.update(open=False, call=False, heard="")
+        elif mtype in ("call", "shortcut"):
+            self.update(open=True, call=True, heard="",
+                        status="listening" if self.state.status in ("idle", "done", "paused") else self.state.status)
+        elif mtype == "hangup":
+            self.update(call=False, heard="", status="idle" if not self.state.busy else self.state.status)
+        elif mtype == "reset":
+            self.update(outcome=None, steps=[], title="", heard="")
         elif mtype == "confirm":
             self.resolve_confirm(bool(msg.get("value")))
         elif mtype == "pause":
             self.set_status("paused")
         elif mtype == "resume":
-            self.set_status("working")
+            if self.state.status == "paused":
+                self.set_status("working" if self.state.busy else "listening")
         elif mtype == "stop":
             self.resolve_confirm(False)
             self.set_status("idle")

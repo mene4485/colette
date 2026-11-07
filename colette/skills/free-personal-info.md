@@ -1,6 +1,8 @@
 ---
 name: free-personal-info
 description: Use when the person wants to change their contact email address or postal address (coordonnées, infos personnelles) in the Free Mobile customer area.
+label: Modifier mes coordonnées
+order: 3
 ---
 # Change personal details (coordonnées) in the Free Mobile customer area
 

@@ -1,6 +1,8 @@
 ---
 name: free-plan
 description: Use when the person wants to change their Free Mobile plan (changer de forfait, passer à un forfait moins cher ou plus grand) in the Free Mobile customer area.
+label: Changer de forfait
+order: 2
 ---
 # Change the Free Mobile plan (changer de forfait)
 

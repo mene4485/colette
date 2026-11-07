@@ -38,7 +38,7 @@ class FakeDemarcheRunner:
     confirm (confirm_change) au récapitulatif : oui → « Valider » cliqué (simulé) dans la même phase,
     non → rien. Sans `confirm` (ou use_confirm_tool=False, env COLETTE_FAKE_LEGACY=1) : garde-fou deux
     phases, s'arrête au récapitulatif avec une ligne `CONFIRMATION: …` et follow_up() simule le clic.
-    Rien n'est jamais fait pour de vrai.
+    Rien n'est jamais fait pour de vrai. `COLETTE_FAKE_FAIL=1` : échec après l'étape 2 (écran 10).
     """
 
     def __init__(self, speed: float = 1.0, use_confirm_tool: Optional[bool] = None) -> None:
@@ -94,6 +94,9 @@ class FakeDemarcheRunner:
             if i == 0:
                 await done(1)
         await done(2)
+        if os.getenv("COLETTE_FAKE_FAIL", "") in ("1", "true"):
+            self.status = "failed"
+            raise RuntimeError("[fake] la page « Changer de forfait » ne répond pas (COLETTE_FAKE_FAIL)")
         choice = "le forfait à deux euros"
         if ask_user is not None:
             await _maybe_await(on_step(Step(text=FAKE_QUESTION, kind="question")))
