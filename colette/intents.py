@@ -1,6 +1,7 @@
 """Commandes vocales déterministes : oui / non / stop / pause / reprise, reconnues AVANT le LLM.
 
-`parse_intent(text, context)` → "yes" | "no" | "stop" | "pause" | "resume" | None
+`parse_intent(text, context)` → "hangup" | "hush" | "yes" | "no" | "stop" | "pause" | "resume" | None
+« hangup » (quittez l'appel, raccrochez…) et « hush » (taisez-vous, arrêtez de parler…) : partout.
 Contextes (ce que Colette attend) :
 - "confirm" : carte OUI/NON affichée → yes / no / stop / pause
 - "working" : démarche en cours → stop / pause
@@ -34,6 +35,14 @@ def _has(norm: str, phrases: tuple[str, ...]) -> bool:
 # Expressions déjà normalisées (sans accents, apostrophes → espace).
 STOP = ("stop", "stoppe", "stoppez", "arrete", "arretez", "arrete tout", "arretez tout",
         "annule tout", "annulez tout", "laisse tomber", "laissez tomber")
+# « Taisez-vous » : Colette se tait tout de suite (l'appel continue).
+HUSH = ("arretez de parler", "arrete de parler", "arreter de parler", "arretez de me parler", "taisez vous",
+        "tais toi", "chut", "silence", "ca suffit", "plus un mot", "fermez la", "stop parle")
+# « Quittez l'appel » : silence immédiat et fin de l'appel (« quittez la pelle » : erreur STT fréquente).
+HANGUP = ("quittez l appel", "quitte l appel", "quitter l appel", "quittez la pelle", "quitter la pelle",
+          "raccrochez", "raccroche", "raccrocher", "au revoir", "fin de l appel", "terminez l appel",
+          "termine l appel", "terminer l appel", "arretez l appel", "arrete l appel", "coupez l appel",
+          "on raccroche")
 PAUSE = ("pause", "attends", "attendez", "attend", "je reprends la main", "je prends la main",
          "une seconde", "une minute", "deux secondes", "un instant", "minute")
 RESUME = ("continue", "continuez", "reprends", "reprenez", "c est bon", "vas y", "allez y",
@@ -52,6 +61,11 @@ def parse_intent(text: str, context: str = "idle") -> Optional[str]:
     norm = normalize(text)
     if not norm:
         return None
+    # Raccrocher / se taire / stop : partout, avant tout le reste.
+    if _has(norm, HANGUP):
+        return "hangup"
+    if _has(norm, HUSH):
+        return "hush"
     # « Stop » / « arrêtez » partout. « Arrêtez » seul en pleine confirmation = stop aussi.
     if _has(norm, STOP):
         return "stop"

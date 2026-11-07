@@ -69,7 +69,7 @@ from pipecat.turns.user_mute import AlwaysUserMuteStrategy
 from pipecat.workers.runner import WorkerRunner
 
 from colette.h_agent import VALIDATE_STEP, Step, split_confirmation
-from colette.intents import is_login_done, is_login_question, is_noise, parse_intent
+from colette.intents import is_login_done, is_login_question, is_noise, normalize, parse_intent
 from colette import site
 from colette.narration import Narrator
 from colette.prompts import CONFIRMED_FOLLOW_UP, GREETING, H_GOAL_TEMPLATE, SYSTEM_PROMPT
@@ -118,7 +118,7 @@ class MicGate(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if isinstance(frame, InputAudioRawFrame) and not self.voice.mic_open():
+        if isinstance(frame, InputAudioRawFrame) and not (self.voice.mic_open() or self.voice.command_window()):
             frame = InputAudioRawFrame(
                 audio=bytes(len(frame.audio)), sample_rate=frame.sample_rate, num_channels=frame.num_channels
             )
@@ -184,10 +184,42 @@ class VoiceGate(FrameProcessor):
             return "paused" if self.voice.paused else "working"
         return "idle"
 
+    def command(self, intent: str, text: str) -> bool:
+        """Taisez-vous / quittez l'appel / arrêtez : silence immédiat, valable partout. True si traité."""
+        if intent == "hush" or (intent == "stop" and not self.voice.working and not self.voice.state.confirm_pending):
+            logger.info("🎯 « {} » → Colette se tait : {!r}", intent, text)
+            self._spawn(self.voice._hush())
+            return True
+        if intent == "hangup":
+            logger.info("🎯 « hangup » → silence et fin de l'appel : {!r}", text)
+            self._spawn(self.voice._hush())
+            self._dispatch({"type": "hangup"})
+            return True
+        return False
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def barge(self, text: str) -> None:
+        """Transcription reçue pendant que Colette parle : seulement une commande courte, pas l'écho."""
+        intent = parse_intent(text, self.context())
+        words = len(normalize(text).split())
+        echo = normalize(text) in normalize(self.voice.state.state.subtitle or "")
+        if intent in ("hush", "hangup", "stop") and words <= 6 and not echo:
+            if not self.command(intent, text):
+                self._dispatch({"type": "stop"})  # stop pendant une démarche
+                logger.info("🎯 « stop » pendant que Colette parle")
+        else:
+            logger.debug("🔇 Pendant que Colette parle, ignoré : {!r}", text)
+
     def route(self, text: str) -> bool:
         """Traite une transcription finale. Renvoie True si elle ne doit PAS aller au LLM."""
         ctx = self.context()
         intent = parse_intent(text, ctx)
+        if self.command(intent, text):
+            return True
         if ctx == "confirm":
             if intent in ("yes", "no"):
                 logger.info("🎯 Intention « {} » → carte de confirmation", intent)
@@ -235,6 +267,12 @@ class VoiceGate(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if direction == FrameDirection.DOWNSTREAM:
+            if isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame)) and self.voice.command_window() \
+                    and not self.voice.mic_open():
+                # Colette parle : on n'écoute que « arrêtez / taisez-vous / quittez l'appel ».
+                if isinstance(frame, TranscriptionFrame) and (frame.text or "").strip():
+                    self.barge(frame.text.strip())
+                return
             if isinstance(frame, TranscriptionFrame):
                 text = (frame.text or "").strip()
                 if text:
@@ -358,6 +396,15 @@ class ColetteVoice:
             return False
         return time.monotonic() - self.last_bot_stop > ECHO_TAIL_S
 
+    def command_window(self) -> bool:
+        """Colette parle (ou vient de se taire) : le micro reste ouvert mais seules les commandes
+        courtes « arrêtez / taisez-vous / quittez l'appel » sont écoutées (pas d'AEC : l'écho de sa
+        propre voix est filtré dans VoiceGate)."""
+        st = self.state.state
+        if not (st.call or st.busy) or st.status == "paused" or (self._stopped and self.working):
+            return False
+        return self.bot_speaking or time.monotonic() - self.last_bot_stop <= ECHO_TAIL_S
+
     def on_user_final(self, text: str) -> None:
         self._last_user_final_at = time.monotonic()
         if not is_noise(text):  # « Merci. » fantôme, « euh » : pas affiché
@@ -367,7 +414,7 @@ class ColetteVoice:
             self.state.update(heard="")
 
     def on_user_interim(self, text: str) -> None:
-        if text and not is_noise(text) and self.mic_open() and text != self.state.state.heard:
+        if text and not is_noise(text) and self.mic_open() and not self.bot_speaking and text != self.state.state.heard:
             self.state.update(heard=text)
 
 
@@ -541,10 +588,9 @@ class ColetteVoice:
                 logger.info("🔘 Raccourci {} → {!r}", msg.get("id"), request)
                 await self._ask_llm(request)
         elif t in ("hangup", "later"):  # « close » (Fermer, changement de page) n'arrête rien
+            await self._hush()  # raccrocher = silence immédiat
             if running and not self._stopped:
                 await self.state.handle_message({"type": "stop", "source": t})
-            elif t == "hangup":
-                await self.say("Au revoir, à bientôt.")
         elif t == "reset":
             pass  # retour à l'écran d'accueil, micro coupé : rien à dire
         elif t == "replay":
