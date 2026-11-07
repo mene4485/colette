@@ -214,7 +214,8 @@ async def _serve(websocket: WebSocket, sid: str) -> None:
         ),
     )
     voice = ColetteVoice(state, runner, transport=transport,
-                         pipeline_params={"audio_in_sample_rate": IN_RATE, "audio_out_sample_rate": OUT_RATE})
+                         pipeline_params={"audio_in_sample_rate": IN_RATE, "audio_out_sample_rate": OUT_RATE},
+                         handoff=True)
 
     @transport.event_handler("on_client_disconnected")
     async def _gone(_t, _ws):

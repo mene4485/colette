@@ -48,6 +48,9 @@ class ColetteState:
     # {"kind": "success|stopped|refused|failed", "title", "text", "summary": [str], "nothing_changed": bool}
     outcome: Optional[dict] = None
     shortcuts: list[dict] = field(default_factory=list)  # [{"id": skill, "label": str}] (écran 2)
+    # mode en ligne : la personne se connecte elle-même sur SA page ; la bulle partage ensuite la session
+    login_handoff: bool = False
+    login_check: float = 0.0  # « c'est bon » entendu → la bulle vérifie la connexion et envoie le jeton
     transcript: list[dict] = field(default_factory=list)  # [{"who": "colette|vous", "text": str}] (6 dernières)
 
 

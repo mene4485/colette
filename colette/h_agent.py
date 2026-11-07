@@ -30,8 +30,8 @@ from colette.skills_loader import load_skills
 TERMINAL = {"completed", "failed", "timed_out", "interrupted"}
 
 DEMO_EXCEPTION = (
-    " EXCEPTION (maquette de démonstration) : pour la connexion, demande l'identifiant puis le mot de passe à la "
-    "personne avec ask_user (une question chacun), puis tape toi-même dans les champs ce qu'elle t'a répondu."
+    " Sur la maquette en ligne, après la connexion, la réponse de ask_user peut contenir une adresse "
+    "http : ouvre-la dans la barre d'adresse, elle te connecte avec la session de la personne."
 )
 
 

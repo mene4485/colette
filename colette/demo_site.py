@@ -651,6 +651,21 @@ class CloudHandler(Handler):
             return self._send(WIDGET_PATH.read_bytes(), 200, "application/javascript; charset=utf-8")
         if path == "/healthz":
             return self._send("ok", 200, "text/plain; charset=utf-8")
+        if path == "/colette/handoff":  # la bulle demande un jeton pour partager la session avec l'agent
+            if not self._logged_in():
+                return self._send('{"error":"not_logged_in"}', 401, "application/json")
+            exp = int(dt.datetime.now().timestamp()) + 300
+            tok = f"{exp}.{self.store._sign(f'claim:{exp}'.encode())[:20]}"
+            return self._send(json.dumps({"token": tok}), 200, "application/json")
+        if path == "/colette/claim":  # navigateur de l'agent : reprend la session de la personne
+            t = (parse_qs(urlparse(self.path).query).get("t") or [""])[0]
+            exp, _, sig = t.partition(".")
+            ok = exp.isdigit() and int(exp) >= dt.datetime.now().timestamp() and \
+                hmac.compare_digest(sig, self.store._sign(f"claim:{exp}".encode())[:20])
+            if not ok:
+                return self._redirect("/account/login?agent=1")
+            return self._redirect("/account/?agent=1",
+                                  f"fm_session={self.store.token()}; Path=/; HttpOnly; SameSite=Lax")
         return super().do_GET()
 
     def do_POST(self):

@@ -299,10 +299,54 @@
     return typeForm;
   }
 
+  // ---- connexion partagée (mode en ligne) ----
+  // La personne tape elle-même identifiant et mot de passe sur SA page. Le formulaire part en fetch
+  // (pas de rechargement : l'appel continue), puis la bulle demande au site un jeton de session à usage
+  // court et l'envoie au backend : l'agent ouvre /colette/claim?t=… et se retrouve connecté.
+  // Colette (et l'agent H) ne voient jamais le mot de passe.
+  function swapPage(html, url) {
+    var doc = new DOMParser().parseFromString(html, "text/html");
+    var kids = Array.prototype.slice.call(document.body.childNodes);
+    for (var i = 0; i < kids.length; i++) if (kids[i] !== host) document.body.removeChild(kids[i]);
+    var nk = Array.prototype.slice.call(doc.body.childNodes);
+    for (var j = 0; j < nk.length; j++) {
+      if (nk[j].tagName === "SCRIPT") continue;
+      document.body.insertBefore(document.importNode(nk[j], true), host);
+    }
+    if (doc.title) document.title = doc.title;
+    try { history.replaceState(null, "", url); } catch (e) { /* ignore */ }
+  }
+
+  function tryHandoff(loud) {
+    fetch("/colette/handoff", { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (d && d.token) send({ type: "handoff", url: location.origin + "/colette/claim?t=" + encodeURIComponent(d.token) });
+        else if (loud) send({ type: "handoff_missing" });
+      })
+      .catch(function () { if (loud) send({ type: "handoff_missing" }); });
+  }
+
+  document.addEventListener("submit", function (ev) {
+    var f = ev.target;
+    if (!HOSTED || !connected || !(state.busy || state.call) || !f || !f.action) return;
+    if (!/\/account\/login/.test(f.action)) return;
+    ev.preventDefault();
+    var body = new URLSearchParams(new FormData(f));
+    fetch(f.action, { method: "POST", body: body, credentials: "same-origin" })
+      .then(function (r) { return r.text().then(function (t) { return [r, t]; }); })
+      .then(function (rt) {
+        var r = rt[0];
+        swapPage(rt[1], r.url);
+        if (!/\/account\/login/.test(r.url)) tryHandoff(true);  // connectée : on partage la session
+      })
+      .catch(function () { f.submit(); });
+  }, true);
+
   // ---- écran de l'agent (mode en ligne) : captures du navigateur cloud de H ----
   function renderLive() {
     if (!HOSTED || !root) return;
-    var show = !!shot && state.open && (state.busy || !!state.confirm);
+    var show = !!shot && state.open && (state.busy || !!state.confirm) && !state.login_handoff;
     if (!liveEl) {
       liveEl = el("div", "live");
       var bar = el("div", "livebar");
@@ -500,6 +544,12 @@
     var foot = el("div", "foot");
     side.appendChild(body);
     ({ home: home, call: call, working: working, confirm: confirm, done: done, failed: failed })[scr](body, foot);
+    if (HOSTED && state.login_handoff && body.firstChild) {
+      var hb = el("div", "hintbox");
+      hb.appendChild(svg("lock"));
+      hb.appendChild(el("span", null, "Connectez-vous vous-même sur la page, à gauche. Colette ne voit pas ce que vous tapez."));
+      body.insertBefore(hb, body.firstChild);
+    }
     if (HOSTED && (scr === "call" || scr === "working" || scr === "confirm")) {
       foot.insertBefore(typeBox(), foot.firstChild);  // sans micro : on peut aussi écrire à Colette
       if (hadFocus) typeForm.firstChild.focus();
@@ -773,7 +823,10 @@
       try {
         var msg = JSON.parse(ev.data);
         if (msg.type === "state" && msg.state) {
+          var prev = state;
           state = msg.state;
+          if (HOSTED && state.login_handoff && !prev.login_handoff) tryHandoff(false);  // déjà connectée ?
+          if (HOSTED && state.login_check && state.login_check !== prev.login_check) tryHandoff(true);
           render();
         } else if (msg.type === "screen") { shot = msg; renderLive(); }
         else if (msg.type === "busy") { busyServer = true; }

@@ -5,8 +5,9 @@
     COLETTE_SITE_URL=...          URL de l'espace abonné de la maquette (défaut http://localhost:8000/account/,
                                   en ligne : https://<projet>.vercel.app/account/)
 
-Sur la maquette, le compte est fictif : l'agent H tape lui-même l'identifiant et le mot de passe de
-démo (en mode hébergé, la personne ne voit le navigateur de l'agent qu'en direct, sans pouvoir taper).
+Connexion : la personne tape TOUJOURS elle-même ses identifiants. En mode en ligne (agent dans un
+navigateur cloud), elle se connecte sur sa propre page et la bulle partage la session avec l'agent
+(jeton /colette/handoff → l'agent ouvre /colette/claim?t=…).
 """
 
 from __future__ import annotations
@@ -29,15 +30,10 @@ FREE_LOGIN = (
 )
 
 DEMO_LOGIN_TEXT = (
-    "Si une page de connexion apparaît : tu ne connais PAS les identifiants de la personne, demande-les-lui.\n"
-    "1. Appelle ask_user avec exactement : « Pour vous connecter, quel est votre identifiant Free ? Ce sont 8 chiffres. »\n"
-    "   Tape dans le champ « Identifiant » seulement les chiffres de sa réponse (« un deux trois » → 123, sans espaces).\n"
-    "2. Appelle ask_user avec exactement : « Et quel est votre mot de passe ? »\n"
-    "   Tape sa réponse dans le champ « Mot de passe », sans point final ni espace (un seul mot dit à voix haute :\n"
-    "   écris-le en minuscules).\n"
-    "3. Clique « Se connecter ». Si la page dit « Identifiant ou mot de passe incorrect », redemande seulement\n"
-    "   l'information qui semble fausse, une seule fois, puis réessaie.\n"
-    "N'invente jamais d'identifiant ni de mot de passe. Ne les répète pas dans tes messages.\n"
+    FREE_LOGIN + "\n"
+    "Si sa réponse contient une adresse qui commence par http, ouvre exactement cette adresse dans la\n"
+    "barre d'adresse : elle te connecte avec la session que la personne vient d'ouvrir. Ne tape aucun\n"
+    "identifiant ni mot de passe.\n"
     "Si un bandeau de cookies apparaît, clique « Continuer sans accepter »."
 )
 

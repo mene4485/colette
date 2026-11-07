@@ -106,9 +106,8 @@ def _confirm_card(action: str, costs_money: bool) -> dict:
 
 
 def _types_herself(question: str) -> bool:
-    """Vrai site Free : la personne tape elle-même ses identifiants et dit « c'est bon ».
-    Maquette : l'agent demande l'identifiant puis le mot de passe, la réponse est la valeur."""
-    return is_login_question(question) and not site.is_demo()
+    """La personne tape elle-même ses identifiants (jamais à l'agent) et dit « c'est bon »."""
+    return is_login_question(question)
 
 
 def _asks_secret(question: str) -> bool:
@@ -266,6 +265,11 @@ class VoiceGate(FrameProcessor):
                 # La personne tape ses identifiants : on attend « c'est bon » sans rien dire.
                 logger.info("🔇 Connexion en cours, ignoré : {!r}", text)
                 return True
+            if _types_herself(self._question) and self.voice.handoff:
+                # Mode en ligne : « c'est bon » → la bulle vérifie la connexion de SA page et envoie le jeton.
+                logger.info("🔑 « c'est bon » → vérification de la connexion sur la page")
+                self.voice.state.update(login_check=time.time())
+                return True
             logger.info("↳ réponse à la question de l'agent H")
             self.resolve(text)
             return True
@@ -354,8 +358,11 @@ class ColetteVoice:
     """Assemble le pipeline et relie voix ⇄ bulle (StateServer) ⇄ agent H (runner)."""
 
     def __init__(self, state: StateServer, runner, *, script: Optional[list[str]] = None,
-                 auto_open: bool = False, transport=None, pipeline_params: Optional[dict] = None) -> None:
+                 auto_open: bool = False, transport=None, pipeline_params: Optional[dict] = None,
+                 handoff: bool = False) -> None:
         self.state = state
+        # mode en ligne : connexion faite par la personne sur sa page, session partagée par la bulle
+        self.handoff = handoff
         # None : micro/HP du laptop (démo locale) ; sinon transport fourni (mode en ligne : WebSocket)
         self._transport = transport
         self._pipeline_params = pipeline_params or {}
@@ -586,6 +593,26 @@ class ColetteVoice:
         t = msg.get("type")
         if t == "text":
             await self.type_text(str(msg.get("text") or ""))
+            return
+        if t == "handoff":  # la personne s'est connectée sur sa page : session partagée avec l'agent
+            url = str(msg.get("url") or "")
+            # même jeton, mais sur l'adresse du site que voit l'agent (site.start_url())
+            from urllib.parse import urlparse
+
+            q, base = urlparse(url).query, urlparse(site.start_url())
+            if q:
+                url = f"{base.scheme}://{base.netloc}/colette/claim?{q}"
+            if self.gate.pending and is_login_question(self.gate._question) and url.startswith("http"):
+                logger.info("🔑 Session partagée avec l'agent")
+                self.state.add_line("vous", "Connectée ✓")
+                self.gate.resolve(
+                    "La personne s'est connectée elle-même sur son écran. Pour reprendre sa session, ouvre "
+                    f"exactement cette adresse dans la barre d'adresse : {url} — puis continue la démarche. "
+                    "Ne tape aucun identifiant ni mot de passe.")
+            return
+        if t == "handoff_missing":
+            await self.say("Je ne vois pas encore votre connexion. Tapez votre identifiant et votre mot de "
+                           "passe sur la page, à gauche, puis cliquez sur « Se connecter ».")
             return
         running = self._demarche_task is not None and not self._demarche_task.done()
         if t == "call":
@@ -857,6 +884,8 @@ class ColetteVoice:
             return {"kind": "refused", "title": "Rien n'a été changé",
                     "text": "Vous avez dit non : je n'ai rien validé.", "summary": [], "nothing_changed": True}
         text = _URL_RE.sub("la page", str(result.get("resultat") or "")).strip()
+        text = re.sub(r"[*_#`]+", "", text)  # markdown de H (« **Montant** ») : texte lu et affiché brut
+        text = re.sub(r"\s*(?:^|\n)\s*-\s+", " ", text).strip()
         if text.startswith("("):
             text = ""
         summary = [s["label"] for s in self.state.state.steps
@@ -971,17 +1000,22 @@ class ColetteVoice:
         if login_idx is not None:
             self.state.complete_through(login_idx)  # « Vous connecter » en cours
         fut = self.gate.expect_answer(question)
+        if login and self.handoff:
+            question = ("Il faut vous connecter. Tapez vous-même votre identifiant et votre mot de passe sur "
+                        "la page, à gauche. Je ne vois pas ce que vous tapez.")
+            self.state.update(login_handoff=True)
         self.state.update(status="listening", subtitle=question, heard="")
         await self.say(question)
         try:
             answer = await asyncio.wait_for(fut, ASK_TIMEOUT_S if not login else ASK_TIMEOUT_S * 2)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             answer = "(pas de réponse)"
+        finally:
+            if self.state.state.login_handoff:
+                self.state.update(login_handoff=False)
         self._narrated_seq = self._step_seq
         self._last_narration = time.monotonic()  # pas de narration tout de suite : H regarde d'abord la page
-        if login_idx is not None and site.is_demo() and not _asks_secret(question) and answer != "(pas de réponse)":
-            self._spawn_say("Merci.")
-        elif login_idx is not None and answer != "(pas de réponse)":
+        if login_idx is not None and answer != "(pas de réponse)":
             self.state.complete_through(login_idx + 1)
             nxt = self._step_announcement(login_idx + 1)
             done = "Merci, je vous connecte. " if site.is_demo() else "Merci, la connexion est faite. "
