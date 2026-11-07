@@ -218,6 +218,7 @@
 
   function send(msg) {
     if (HOSTED && /^(open|call|shortcut|resume)$/.test(msg.type)) startAudio();  // geste de la personne
+    if (HOSTED && /^(open|call|shortcut|text)$/.test(msg.type)) setTimeout(shareSession, 0);
     if (hasBinding()) window.__coletteSend(JSON.stringify(msg));
     else if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
   }
@@ -354,6 +355,23 @@
     try { history.replaceState(null, "", url); } catch (e) { /* ignore */ }
   }
 
+  // Partage proactif : à chaque demande, le backend reçoit un lien de reprise de la session de la
+  // personne, sur sa page actuelle → l'agent démarre déjà connecté, là où elle est.
+  var lastShare = 0;
+  function shareSession() {
+    if (!HOSTED || !connected || Date.now() - lastShare < 3000) return;
+    lastShare = Date.now();
+    fetch("/colette/handoff", { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !d.token) return;
+        var here = location.pathname + location.search;
+        send({ type: "session", url: location.origin + "/colette/claim?t=" + encodeURIComponent(d.token) +
+                                      "&next=" + encodeURIComponent(here) });
+      })
+      .catch(function () { /* pas connectée : l'agent demandera la connexion */ });
+  }
+
   function tryHandoff(loud) {
     fetch("/colette/handoff", { credentials: "same-origin", cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : null; })
@@ -393,9 +411,17 @@
     var q = new URLSearchParams(u.search); q.delete("agent"); q.delete("__path");
     var target = u.pathname + (q.toString() ? "?" + q.toString() : "");
     if (target === syncedPath) return;
+    var prev = syncedPath;
     syncedPath = target;
     if (target === location.pathname + location.search) return;
-    fetch(target, { credentials: "same-origin", cache: "no-store" })
+    // Changement de forfait validé par l'agent (dans SON navigateur) : la personne a déjà dit oui,
+    // on rejoue la même validation sur sa page pour qu'elle voie le nouveau forfait.
+    var offre = (/\/account\/forfait\/recap\?(?:.*&)?offre=(\w+)/.exec(prev) || [])[1];
+    var req = (offre && /^\/account\/forfait\/confirmation/.test(target))
+      ? fetch("/account/forfait/valider", { method: "POST", credentials: "same-origin",
+                                            body: new URLSearchParams({ offre: offre }) })
+      : fetch(target, { credentials: "same-origin", cache: "no-store" });
+    req
       .then(function (r) { return r.text().then(function (t) { return [r, t]; }); })
       .then(function (rt) {
         if (/\/account\/login/.test(rt[0].url)) return;  // pas connectée sur sa page : on ne touche à rien
@@ -780,10 +806,7 @@
       body.appendChild(box);
     }
     var row = el("div", "row2");
-    row.appendChild(button("sec", "Nouvelle demande", function () {
-      state.outcome = null; state.call = true; render();
-      send({ type: "reset" }); send({ type: "call" });
-    }));
+    row.appendChild(button("sec", "Nouvelle demande", newSession));
     row.appendChild(button("dark", "Terminer l'appel", function () { state.open = false; render(); send({ type: "later" }); }));
     foot.appendChild(row);
   }
@@ -899,10 +922,28 @@
     markBox.style.width = (r.width + 2 * pad) + "px"; markBox.style.height = (r.height + 2 * pad) + "px";
   }
 
+  // « Nouvelle demande » : on ferme la session (le serveur arrête tout, agent compris) et on en ouvre
+  // une neuve, puis l'appel reprend tout seul. Plus d'état résiduel d'une démarche à l'autre.
+  var restartCall = false;
+  function newSession() {
+    restartCall = true;
+    shot = null; syncedPath = ""; lastShare = 0;
+    if (hlBox) hlBox.style.display = "none";
+    state = { open: true, status: "idle", steps: [], subtitle: "", confirm: null, call: true, transcript: [] };
+    render();
+    if (ws) { try { ws.close(); } catch (e) { /* ignore */ } } else connect();
+  }
+
   function connect() {
     try { ws = new WebSocket(WS_URL); } catch (e) { setTimeout(connect, 1000); return; }
     ws.binaryType = "arraybuffer";
-    ws.onopen = function () { connected = true; busyServer = false; render(); };
+    ws.onopen = function () {
+      connected = true; busyServer = false; render();
+      if (restartCall) {
+        restartCall = false;
+        send({ type: "open" }); send({ type: "call" });
+      }
+    };
     ws.onmessage = function (ev) {
       if (typeof ev.data !== "string") { playPcm(ev.data); return; }
       try {
@@ -920,11 +961,12 @@
     };
     ws.onclose = function () {
       connected = false; ws = null; render();
-      setTimeout(connect, busyServer ? 15000 : (HOSTED ? 2000 : 1000));
+      setTimeout(connect, busyServer ? 15000 : restartCall ? 300 : (HOSTED ? 2000 : 1000));
     };
     ws.onerror = function () { /* onclose suit */ };
   }
 
+  window.__colette.newSession = function () { newSession(); };
   window.__colette.getState = function () { return { state: state, connected: connected, screen: screen() }; };
   window.__colette.root = function () { return root; };
   window.__colette.onState = function (s) { connected = true; state = s; render(); };

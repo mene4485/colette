@@ -99,9 +99,9 @@ def _lower_first(text: str) -> str:
 def _confirm_card(action: str, costs_money: bool) -> dict:
     """Carte d'accord (écran 6) : « passer au forfait à 2 €, à partir du 1er décembre » →
     titre « Passer au forfait à 2 € ? », puces « À partir du 1er décembre. » (+ prix), « Oui, passer »."""
-    head, _, rest = action.partition(",")
-    head = head.strip() or action
-    bullets = [p.strip()[:1].upper() + p.strip()[1:] + "." for p in rest.split(",") if p.strip()]
+    parts = [x for x in re.split(r",(?!\d)", action)]  # pas de coupure dans « 9,99 € »
+    head = parts[0].strip() or action
+    bullets = [p.strip()[:1].upper() + p.strip()[1:] + "." for p in parts[1:] if p.strip()]
     if costs_money:
         bullets.append("Cela change ce que vous payez.")
     verb = head.split()[0].lower() if head.split() else "valider"
@@ -116,6 +116,15 @@ def _types_herself(question: str) -> bool:
 
 def _asks_secret(question: str) -> bool:
     return "mot de passe" in normalize(question or "")
+
+
+# « non, je veux celui à 29,99 € » pendant la carte OUI/NON : une correction, pas un refus
+_CORRECTION = re.compile(r"(\d|forfait|euro|celui|celle|autre|plutot|prefere|je veux|je voudrais|max|serie|5g|go\b)")
+
+
+def _is_correction(text: str) -> bool:
+    norm = normalize(text)
+    return len(norm.split()) >= 3 and bool(_CORRECTION.search(norm))
 
 
 _BARGE_WORDS = re.compile(r"\b(non|attendez|attends|stop|arrete|arretez|pardon|excusez|minute|une seconde|taisez)\b")
@@ -257,6 +266,11 @@ class VoiceGate(FrameProcessor):
         if self.command(intent, text):
             return True
         if ctx == "confirm":
+            if intent != "yes" and intent != "stop" and _is_correction(text):
+                logger.info("🎯 Correction pendant la carte → H refait le choix : {!r}", text)
+                self.voice._correction = text
+                self._dispatch({"type": "confirm", "value": False})
+                return True
             if intent in ("yes", "no"):
                 logger.info("🎯 Intention « {} » → carte de confirmation", intent)
                 self._dispatch({"type": "confirm", "value": intent == "yes"})
@@ -443,6 +457,9 @@ class ColetteVoice:
         self._fixed_plan = False  # plan tiré du skill, affiché dès le début : annoncer_etapes de H ignoré
         self._announced_steps: set[int] = {0}  # étapes déjà annoncées « Maintenant, je vais… »
         self._confirmations: list[tuple[str, bool]] = []  # confirm_change de cette démarche (résumé, oui ?)
+        self._correction = ""  # « non, je veux l'autre » : renvoyé à H comme consigne, pas comme refus
+        self.session_url = ""  # mode en ligne : session de la personne (claim) sur sa page actuelle
+        self.session_at = 0.0
         self._approved = False  # la personne a dit oui à une action pendant cette démarche
         self._last_objectif = ""
         self._was_greeted_call = False
@@ -690,12 +707,26 @@ class ColetteVoice:
                     f"exactement cette adresse dans la barre d'adresse : {url} — puis continue la démarche. "
                     "Ne tape aucun identifiant ni mot de passe.")
             return
+        if t == "session":  # la bulle partage la session de la personne (connectée) et sa page actuelle
+            url = str(msg.get("url") or "")
+            from urllib.parse import urlparse
+
+            q, base = urlparse(url).query, urlparse(site.start_url())
+            if q:
+                self.session_url = f"{base.scheme}://{base.netloc}/colette/claim?{q}"
+                self.session_at = time.monotonic()
+            return
         if t == "handoff_missing":
             await self.say("Je ne vois pas encore votre connexion. Tapez votre identifiant et votre mot de "
                            "passe sur la page, à gauche, puis cliquez sur « Se connecter ».")
             return
         running = self._demarche_task is not None and not self._demarche_task.done()
         if t == "call":
+            if not self._started.is_set():
+                try:
+                    await asyncio.wait_for(self._started.wait(), 15)
+                except asyncio.TimeoutError:
+                    pass
             if self._started.is_set():
                 if not self.greeted:
                     await self.greet()
@@ -784,9 +815,19 @@ class ColetteVoice:
         result: dict
         speak = True  # le LLM résume-t-il ? (non : on a déjà tout dit nous-mêmes)
         try:
+            start = site.start_url()
+            fresh = self.handoff and self.session_url and time.monotonic() - self.session_at < 240
+            if hasattr(self.runner, "start_url_override"):
+                self.runner.start_url_override = self.session_url if fresh else None
+            if fresh:
+                start = self.session_url
             goal = H_GOAL_TEMPLATE.format(objectif=objectif or "changer de forfait Free Mobile",
-                                          start_url=site.start_url(), site_label=site.site_label(),
+                                          start_url=start, site_label=site.site_label(),
                                           login=site.login_instructions())
+            if fresh:
+                goal += ("\nTon navigateur est DÉJÀ connecté avec la session de la personne et ouvert sur la page "
+                         "où elle se trouve. Ne te reconnecte pas et ne repars pas de l'accueil si la page "
+                         "actuelle permet déjà d'avancer : continue depuis cette page.\n")
             plan = match_plan(objectif)
             if is_view_request(objectif):
                 goal += ("\nLa personne veut seulement CONSULTER une information : ne modifie rien, ne "
@@ -937,7 +978,14 @@ class ColetteVoice:
         if self._stopped:
             return False
         self._start_validate_step()
+        self._correction = ""
         ok = await self._approve(summary or "valider cette action", costs_money=costs_money)
+        if not ok and self._correction and not self._stopped:
+            corr, self._correction = self._correction, ""
+            return ("Not done yet: the person does NOT want this choice. She said: « " + corr + " ». "
+                    "Do not stop. Go back to the list (« Changer de forfait » or « Annuler »), click the "
+                    "button of exactly what she asked for (e.g. « Choisir ce forfait » in that plan's section), "
+                    "then call confirm_change again with the new summary.")
         self._confirmations.append((summary, ok))
         return ok and not self._stopped
 
@@ -1031,6 +1079,9 @@ class ColetteVoice:
         logger.info("✋ Réponse : {}", "OUI" if ok else "NON")
         if self._stopped:
             return False
+        if not ok and self._correction:
+            await self.say("D'accord, je prends plutôt celui-là.")
+            return ok
         await self.say("Merci, je valide." if ok else "D'accord, je ne valide rien. Rien n'a été changé.")
         return ok
 

@@ -658,13 +658,18 @@ class CloudHandler(Handler):
             tok = f"{exp}.{self.store._sign(f'claim:{exp}'.encode())[:20]}"
             return self._send(json.dumps({"token": tok}), 200, "application/json")
         if path == "/colette/claim":  # navigateur de l'agent : reprend la session de la personne
-            t = (parse_qs(urlparse(self.path).query).get("t") or [""])[0]
+            qs = parse_qs(urlparse(self.path).query)
+            t = (qs.get("t") or [""])[0]
+            nxt = (qs.get("next") or ["/account/"])[0]
+            if not nxt.startswith("/account") or "//" in nxt or nxt.startswith("/account/log"):
+                nxt = "/account/"
             exp, _, sig = t.partition(".")
             ok = exp.isdigit() and int(exp) >= dt.datetime.now().timestamp() and \
                 hmac.compare_digest(sig, self.store._sign(f"claim:{exp}".encode())[:20])
             if not ok:
                 return self._redirect("/account/login?agent=1")
-            return self._redirect("/account/?agent=1",
+            sep = "&" if "?" in nxt else "?"
+            return self._redirect(nxt + sep + "agent=1",
                                   f"fm_session={self.store.token()}; Path=/; HttpOnly; SameSite=Lax")
         return super().do_GET()
 

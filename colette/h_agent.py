@@ -184,6 +184,8 @@ def make_tools(
             « Approved » ; sinon ne clique pas, arrête-toi et réponds."""
             logger.info("✋ confirm_change({!r}, costs_money={})", summary, costs_money)
             ok = await confirm(str(summary or "").strip(), bool(costs_money))
+            if isinstance(ok, str):  # correction de la personne (« non, celui à 29,99 € ») : consigne pour H
+                return ok
             return APPROVED if ok else REFUSED
 
         tools.append(tool(confirm_change, name="confirm_change"))
@@ -238,6 +240,7 @@ class DemarcheRunner:
         self.host = host
         # mode cloud : appelé à chaque capture {"url", "title", "image": bytes PNG, "cursor": [x, y], "viewport": [w, h]}
         self.on_screen = on_screen
+        self.start_url_override: Optional[str] = None
         self.max_time_s = max_time_s
         self.log_dir = Path(log_dir)
         self._client: Optional[AsyncClient] = None
@@ -266,7 +269,9 @@ class DemarcheRunner:
 
     def _environment(self) -> dict:
         if self.host == "cloud":
-            return {"id": "web", "kind": "web", "host": "cloud", "start_url": site.start_url()}
+            # start_url_override : session de la personne (déjà connectée, sur sa page actuelle)
+            url = getattr(self, "start_url_override", None) or site.start_url()
+            return {"id": "web", "kind": "web", "host": "cloud", "start_url": url}
         return {"id": "laptop", "kind": "web", "host": "user_device"}
 
     async def _push_screen(self, image_url: str, meta: dict) -> None:

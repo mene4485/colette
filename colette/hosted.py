@@ -12,7 +12,7 @@
     uvicorn colette.hosted:app --host 0.0.0.0 --port $PORT
 
 Variables : HAI_API_KEY, GLADIA_API_KEY, OPENROUTER_API_KEY, CARTESIA_API_KEY, CARTESIA_VOICE_ID,
-COLETTE_SITE_URL (https://<projet>.vercel.app/account/), COLETTE_MAX_SESSIONS (défaut 2),
+COLETTE_SITE_URL (https://<projet>.vercel.app/account/), COLETTE_MAX_SESSIONS (défaut 3),
 COLETTE_FAKE=1 (faux agent H : aucune session H consommée).
 """
 
@@ -52,7 +52,7 @@ from colette.state import StateServer  # noqa: E402
 
 IN_RATE = 16000
 OUT_RATE = 24000
-MAX_SESSIONS = int(os.getenv("COLETTE_MAX_SESSIONS", "2"))
+MAX_SESSIONS = int(os.getenv("COLETTE_MAX_SESSIONS", "3"))
 SCREEN_WIDTH = 1100  # captures réduites (JPEG) pour la bulle
 
 app = FastAPI(title="Colette backend")
