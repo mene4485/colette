@@ -56,7 +56,7 @@
     ".mark span{position:absolute;left:18px;bottom:calc(100% + 6px);background:" + BLUE + ";color:#fff;font-size:15px;font-weight:700;",
     "padding:6px 14px;border-radius:8px;white-space:nowrap;pointer-events:none!important}",
     /* ---- mode en ligne : écran de l'agent H (captures du navigateur cloud) à gauche du panneau ---- */
-    ".live{position:fixed;left:0;top:0;bottom:0;right:" + PANEL_W + "px;background:#0F172A;display:none;flex-direction:column;",
+    ".live{position:fixed;z-index:2147483646;left:0;top:0;bottom:0;right:" + PANEL_W + "px;background:#0F172A;display:none;flex-direction:column;",
     "padding:14px 18px 12px;gap:10px;pointer-events:auto}",
     ".livebar{display:flex;align-items:center;gap:10px;color:#fff;font-size:18px;font-weight:800}",
     ".livebar i{width:11px;height:11px;border-radius:50%;background:#EF4444;animation:halo 1.6s ease-in-out infinite}",

@@ -275,7 +275,7 @@ class DemarcheRunner:
             return
         try:
             key = os.getenv("HAI_API_KEY", "")
-            async with httpx.AsyncClient(timeout=10) as http:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as http:
                 r = await http.get(image_url, headers={"Authorization": f"Bearer {key}"})
             if r.status_code != 200:
                 logger.debug("Capture H {} → HTTP {}", image_url[-40:], r.status_code)
