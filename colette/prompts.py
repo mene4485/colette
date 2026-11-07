@@ -36,11 +36,19 @@ Règles de sécurité :
 - Ne prétends jamais avoir fait quelque chose que l'outil n'a pas confirmé.
 """
 
-# Consigne transmise à l'agent H (computer use). Phase 1 : H s'arrête avant toute validation et
-# termine par une ligne CONFIRMATION. Notre code (pas le LLM) pose la question à voix haute et
-# n'envoie CONFIRMED_FOLLOW_UP qu'après un « oui » explicite.
+# Consigne transmise à l'agent H (computer use). H annonce ses étapes (annoncer_etapes), les coche
+# (etape_terminee) et appelle confirm_change juste avant le clic qui valide : notre code pose la
+# question à voix haute et ne répond « Approved » qu'après un oui explicite (voix ou bouton).
+# Garde-fou : si H s'arrête au récapitulatif sans appeler confirm_change, sa ligne CONFIRMATION
+# déclenche la confirmation en deux phases (CONFIRMED_FOLLOW_UP après le oui).
 H_GOAL_TEMPLATE = """\
 Démarche demandée par la personne : {objectif}
+
+1. Lis le skill qui correspond à cette démarche s'il y en a un (chemin à suivre sur le site).
+2. AVANT toute action sur le site, appelle annoncer_etapes avec 3 à 6 étapes courtes en français
+   simple (ex. « Ouvrir votre espace abonné », « Trouver les forfaits », « Choisir avec vous »).
+   Si une action devra être validée, la dernière étape est exactement « Valider avec votre accord ».
+3. Appelle etape_terminee(numero) à la fin de chaque étape (numéro à partir de 1).
 
 Commence par https://mobile.free.fr/account/ (espace abonné Free Mobile).
 Si une page de connexion apparaît, appelle ask_user avec exactement cette question : « Il faut
@@ -49,14 +57,17 @@ Dites-moi « c'est bon » quand c'est fait. » Ne demande JAMAIS l'identifiant, 
 un code : la personne les tape elle-même. Attends sa réponse avant de continuer.
 S'il faut choisir entre plusieurs options (par exemple plusieurs forfaits), appelle ask_user avec
 une question courte qui donne les options et leurs prix.
-Ne clique JAMAIS sur un bouton qui valide, confirme, paie ou résilie : arrête-toi juste avant,
-sur la page de récapitulatif. Ne demande pas toi-même la confirmation avec ask_user : elle sera
-demandée à la personne à voix haute après ta réponse.
-Ta réponse finale : deux phrases simples qui décrivent ce qui est affiché, puis une dernière
-ligne exactement de la forme
+Juste avant de cliquer sur un bouton qui valide, confirme, enregistre, paie ou résilie : appelle
+confirm_change avec un résumé en français (verbe à l'infinitif, avec le prix et la date affichés)
+et costs_money=true si cela change ce que la personne paie. Ne demande pas cette confirmation avec
+ask_user. Clique seulement si la réponse commence par « Approved » ; si elle dit « Not done »,
+ne clique pas, arrête-toi et réponds.
+Ta réponse finale : deux phrases simples qui décrivent ce qui a été fait ou ce qui est affiché,
+puis une dernière ligne « CONFIRMATION: aucune ».
+Seulement si tu t'es arrêté devant un bouton de validation SANS avoir appelé confirm_change, la
+dernière ligne est à la place de la forme
 CONFIRMATION: <ce que le bouton de validation ferait, en commençant par un verbe à l'infinitif, avec le prix et la date>
 par exemple « CONFIRMATION: passer au forfait à 2 euros par mois, à partir du 1er décembre ».
-S'il n'y a rien à valider, écris « CONFIRMATION: aucune ».
 """
 
 CONFIRMED_FOLLOW_UP = (

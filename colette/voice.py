@@ -65,7 +65,7 @@ from pipecat.turns.user_mute import AlwaysUserMuteStrategy
 from pipecat.workers.runner import WorkerRunner
 
 from colette.audio_local import LocalAudioTransport, LocalAudioTransportParams
-from colette.h_agent import Step, split_confirmation
+from colette.h_agent import VALIDATE_STEP, Step, split_confirmation
 from colette.intents import is_noise, parse_intent
 from colette.narration import Narrator
 from colette.prompts import CONFIRMED_FOLLOW_UP, GREETING, H_GOAL_TEMPLATE, SYSTEM_PROMPT
@@ -79,6 +79,10 @@ CONFIRM_TIMEOUT_S = 120.0  # sans réponse → on ne valide pas
 REMIND_GAP_S = 4.0  # « Dites simplement oui ou non. » au plus toutes les 4 s
 
 _URL_RE = re.compile(r"https?://\S+")
+
+
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:] if text[:2] != text[:2].upper() else text
 
 
 def _env_flag(name: str) -> bool:
@@ -264,6 +268,8 @@ class ColetteVoice:
         self._step_seq = 0  # narration « dernier gagnant »
         self._narrated_seq = 0
         self._latest_step: Optional[tuple[int, Step, float]] = None
+        self._plan_announced = False  # H a appelé annoncer_etapes → la narration n'ajoute plus d'étapes
+        self._confirmations: list[tuple[str, bool]] = []  # confirm_change de cette démarche (résumé, oui ?)
         self._narr_task: Optional[asyncio.Task] = None
         self._demarche_task: Optional[asyncio.Task] = None
         self._started = asyncio.Event()
@@ -467,22 +473,35 @@ class ColetteVoice:
         self.working = True
         self.paused = False
         self._stopped = False
+        self._plan_announced = False
+        self._confirmations = []
         self.state.update(steps=[], status="working", open=True)
         self.state.add_step("Comprendre votre demande")
         result: dict
         speak = True  # le LLM résume-t-il ? (non : on a déjà tout dit nous-mêmes)
         try:
             goal = H_GOAL_TEMPLATE.format(objectif=objectif or "changer de forfait Free Mobile")
-            answer = await self.runner.run(goal, on_step=self._on_step, ask_user=self._ask_user)
+            answer = await self.runner.run(
+                goal, on_step=self._on_step, ask_user=self._ask_user,
+                on_plan=self._on_plan, on_step_done=self._on_step_done, confirm=self._confirm_change,
+            )
             body, action = split_confirmation(answer)
-            logger.info("🛠️  Phase 1 terminée ; confirmation demandée : {!r}", action)
+            asked = self._confirmations[-1] if self._confirmations else None
+            logger.info("🛠️  Phase 1 terminée ; confirm_change : {} ; ligne CONFIRMATION : {!r}", asked, action)
             if self._stopped:
                 result, speak = {"statut": "arrêtée par la personne"}, False
+            elif asked is not None and not asked[1]:
+                # Refus via confirm_change : jamais de 2e question, rien n'est validé.
+                result, speak = {"statut": "non validé : la personne a dit non, rien n'a été changé",
+                                 "resultat": body}, False
             elif action is None:
                 self.state.finish_steps()
-                result = {"statut": "terminé", "resultat": body or "(l'agent n'a rien répondu)"}
-            elif await self._confirm(action):
-                self.state.add_step("Valider, avec votre accord")
+                statut = "validé avec l'accord oral de la personne" if asked else "terminé"
+                result = {"statut": statut, "resultat": body or "(l'agent n'a rien répondu)"}
+            elif asked is not None or await self._confirm(action):
+                # Garde-fou deux phases : H s'est arrêté au récapitulatif. Si la personne a déjà dit
+                # oui via confirm_change, on ne redemande pas.
+                self._start_validate_step()
                 answer2 = await self.runner.follow_up(CONFIRMED_FOLLOW_UP)
                 if self._stopped:
                     result, speak = {"statut": "arrêtée par la personne pendant la validation"}, False
@@ -518,10 +537,57 @@ class ColetteVoice:
         logger.info("🛠️  run_demarche → {}", result)
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=speak))
 
-    async def _confirm(self, action: str) -> bool:
+    # ---- plan annoncé par H (annoncer_etapes / etape_terminee) ----------------
+    async def _on_plan(self, labels: list[str]) -> None:
+        labels = [l.rstrip(" .") for l in labels]
+        if labels and "accord" in labels[-1].lower() and labels[-1] != VALIDATE_STEP:
+            labels[-1] = VALIDATE_STEP  # libellé imposé pour la dernière étape
+        self._plan_announced = True
+        self.state.set_steps(labels)
+        self.state.advance_step()  # 1re étape en cours
+        validate = labels[-1] == VALIDATE_STEP
+        todo = labels[:-1] if validate else labels
+        nums = ("un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit")
+        spoken = " ; ".join(f"{nums[i] if i < len(nums) else i + 1}, {_lower_first(l)}" for i, l in enumerate(todo))
+        text = f"Voici ce que je vais faire : {spoken}."
+        if validate:
+            text += " Et je vous demanderai votre accord avant de valider."
+        logger.info("📋 Plan lu : {}", text)
+        self._last_narration = time.monotonic() + 3.0  # pas de narration par-dessus le plan
+        await self.say(text)
+
+    def _on_step_done(self, number: int) -> None:
+        if not self._plan_announced:
+            return
+        steps = self.state.state.steps
+        if steps and steps[-1]["label"] == VALIDATE_STEP:
+            number = min(number, len(steps) - 1)  # « Valider » ne se coche qu'après le oui
+        self.state.complete_through(number)
+
+    def _start_validate_step(self) -> None:
+        """Met « Valider avec votre accord » en cours (l'ajoute s'il n'était pas annoncé)."""
+        steps = self.state.state.steps
+        if not any(s["label"] == VALIDATE_STEP for s in steps):
+            self.state.add_step(VALIDATE_STEP)
+            return
+        idx = next(i for i, s in enumerate(steps) if s["label"] == VALIDATE_STEP)
+        self.state.complete_through(idx)  # étapes d'avant faites, « Valider » en cours
+
+    async def _confirm_change(self, summary: str, costs_money: bool) -> bool:
+        """Tool H `confirm_change` : carte + question orale, bloque jusqu'au oui/non."""
+        if self._stopped:
+            return False
+        self._start_validate_step()
+        ok = await self._confirm(summary or "valider cette action", costs_money=costs_money)
+        self._confirmations.append((summary, ok))
+        return ok and not self._stopped
+
+    async def _confirm(self, action: str, *, costs_money: bool = False) -> bool:
         """Carte OUI/NON + question orale. Seul un oui explicite (voix ou bouton) renvoie True."""
+        action = action.strip().rstrip(".") or "valider cette action"
         card = action[0].upper() + action[1:] + " ?"
-        question = f"Je m'apprête à {action}. Je valide ? Dites oui ou non."
+        money = " Attention, cela change ce que vous payez." if costs_money else ""
+        question = f"Je m'apprête à {_lower_first(action)}.{money} Je valide ? Dites oui ou non."
         logger.info("✋ Confirmation demandée : {}", action)
         fut = self.state.ask_confirm(card)
         await self.say(question)
@@ -565,7 +631,8 @@ class ColetteVoice:
                 if not text:
                     continue  # action technique, ou phrase déjà dite
                 text = _URL_RE.sub("la page", text).strip()
-                self.state.add_step(text[:80])
+                if not self._plan_announced:  # sans plan annoncé : étapes tirées de la narration
+                    self.state.add_step(text[:80])
                 age = time.monotonic() - received
                 if seq != self._step_seq:
                     logger.info("💬 (jetée : étape dépassée) {}", text)

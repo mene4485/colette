@@ -23,6 +23,7 @@ from loguru import logger
 
 from colette.chrome import ensure_chrome
 from colette.h_cleanup import delete_pending_channels, utcnow
+from colette.skills_loader import load_skills
 
 TERMINAL = {"completed", "failed", "timed_out", "interrupted"}
 
@@ -40,6 +41,14 @@ class Step:
 
 OnStep = Callable[[Step], Union[None, Awaitable[None]]]
 AskUser = Callable[[str], Awaitable[str]]
+OnPlan = Callable[[list[str]], Union[None, Awaitable[None]]]  # annoncer_etapes
+OnStepDone = Callable[[int], Union[None, Awaitable[None]]]  # etape_terminee (numéro à partir de 1)
+Confirm = Callable[[str, bool], Awaitable[bool]]  # confirm_change(summary, costs_money) → oui ?
+
+H_SKILLS = ["h/visual-browser", "h/answering", "h/planning"]
+VALIDATE_STEP = "Valider avec votre accord"
+APPROVED = "Approved by the user: proceed."
+REFUSED = "Not done: the user refused. Stop."
 
 DEFAULT_INSTRUCTIONS = (
     "Tu aides une personne âgée à faire une démarche en ligne dans SON navigateur. "
@@ -48,14 +57,23 @@ DEFAULT_INSTRUCTIONS = (
     "Si une information te manque (identifiant, choix, code reçu par SMS), ou si une page de "
     "connexion apparaît, appelle l'outil ask_user et attends la réponse ; ne devine jamais. "
     "Ne tape jamais de mot de passe toi-même : demande à la personne de le taper. "
-    "Ne clique jamais sur un bouton qui valide, paie, résilie ou envoie quelque chose tant qu'un "
-    "message ne t'a pas dit explicitement que la personne a confirmé à voix haute ; arrête-toi "
-    "avant et réponds. "
+    "Ne clique jamais sur un bouton qui valide, paie, résilie ou envoie quelque chose tant que "
+    "confirm_change n'a pas répondu « Approved » (ou qu'un message ne t'a pas dit explicitement que "
+    "la personne a confirmé à voix haute) ; sinon arrête-toi avant et réponds. "
     "Une bulle violette « Colette » (et son panneau) s'affiche en bas à droite de chaque page : "
     "c'est ton interface avec la personne, elle ne fait pas partie du site. Ignore-la, ne clique "
     "jamais dessus (ni sur ses boutons Pause, Stop ou ×), n'essaie pas de la fermer et ne la "
     "confonds pas avec le chat d'assistance du site. Elle laisse passer les clics : si un élément "
-    "du site est en partie caché derrière elle, clique simplement sur cet élément."
+    "du site est en partie caché derrière elle, clique simplement sur cet élément. "
+    "Avant toute action sur le site, lis le skill qui correspond à la démarche (s'il y en a un), puis "
+    "appelle annoncer_etapes avec 3 à 6 étapes courtes en français, compréhensibles par la personne "
+    f"(ex. « Ouvrir votre espace abonné »). Si une action devra être validée, la dernière étape est "
+    f"exactement « {VALIDATE_STEP} ». Appelle ensuite etape_terminee(numero) à la fin de chaque étape. "
+    "Avant tout clic qui valide, paie, résilie, enregistre ou envoie quelque chose, appelle "
+    "confirm_change avec un résumé court en français (ce que le bouton ferait, prix et date) et "
+    "costs_money=true si cela change ce que la personne paie ; ne clique que si la réponse dit "
+    "« Approved ». Si une connexion, un mot de passe ou un code SMS est demandé, appelle ask_user pour "
+    "que la personne le tape elle-même, puis attends."
 )
 
 
@@ -64,8 +82,8 @@ def describe_action(req: dict) -> str:
     name = req.get("tool_name") or ""
     args = req.get("args") or {}
     element = (args.get("element") or "").strip()
-    if name in ("ask_user", "answer"):
-        return ""  # la question est déjà remontée par le tool
+    if name in ("ask_user", "answer", "annoncer_etapes", "etape_terminee", "confirm_change"):
+        return ""  # déjà remonté par le tool lui-même (question, plan, carte OUI/NON)
     if name == "go_to_web":
         return f"J'ouvre {args.get('url', 'la page')}"
     if name in ("click_web", "double_click_web"):
@@ -110,15 +128,73 @@ def split_confirmation(answer: str) -> tuple[str, Optional[str]]:
     return "\n".join(body).strip(), action
 
 
+def make_tools(
+    *,
+    on_plan: Optional[OnPlan] = None,
+    on_step_done: Optional[OnStepDone] = None,
+    confirm: Optional[Confirm] = None,
+) -> list:
+    """Custom tools H reliés à la bulle : annoncer_etapes, etape_terminee, confirm_change."""
+    tools = []
+    if on_plan is not None:
+
+        async def annoncer_etapes(etapes: list[str]) -> str:
+            """À appeler EN PREMIER, avant toute action sur le site (après avoir lu le skill de la
+            démarche) : la liste des 3 à 6 étapes que tu vas suivre, chacune courte, en français simple,
+            compréhensible par une personne âgée (ex. « Ouvrir votre espace abonné »). Si une action
+            devra être validée, la dernière étape est exactement « Valider avec votre accord ».
+            Elles sont affichées et lues à la personne."""
+            labels = [str(e).strip() for e in etapes or [] if str(e).strip()][:8]
+            if not labels:
+                return "Liste vide : donne au moins une étape."
+            logger.info("📋 annoncer_etapes {}", labels)
+            await _maybe_await(on_plan(labels))
+            return ("Étapes affichées à la personne. Appelle etape_terminee(numero) à la fin de chaque "
+                    "étape (numéro à partir de 1).")
+
+        tools.append(tool(annoncer_etapes, name="annoncer_etapes"))
+    if on_step_done is not None:
+
+        async def etape_terminee(numero: int) -> str:
+            """À appeler à la fin de chaque étape annoncée avec annoncer_etapes (numero commence à 1).
+            Coche l'étape dans l'affichage de la personne."""
+            logger.info("✅ etape_terminee({})", numero)
+            await _maybe_await(on_step_done(int(numero)))
+            return "OK"
+
+        tools.append(tool(etape_terminee, name="etape_terminee"))
+    if confirm is not None:
+
+        async def confirm_change(summary: str, costs_money: bool = False) -> str:
+            """À appeler JUSTE AVANT tout clic qui valide, paie, résilie, enregistre ou envoie quelque
+            chose. summary : en français, ce que le bouton ferait, en commençant par un verbe à
+            l'infinitif, avec le prix et la date affichés (ex. « passer au Forfait 2€, 2 € par mois,
+            à partir du 1er décembre »). costs_money : true si cela change ce que la personne paie.
+            La personne répond oui ou non à voix haute. Ne clique que si la réponse commence par
+            « Approved » ; sinon ne clique pas, arrête-toi et réponds."""
+            logger.info("✋ confirm_change({!r}, costs_money={})", summary, costs_money)
+            ok = await confirm(str(summary or "").strip(), bool(costs_money))
+            return APPROVED if ok else REFUSED
+
+        tools.append(tool(confirm_change, name="confirm_change"))
+    return tools
+
+
 class DemarcheRunner:
     """Lance une démarche dans le Chrome local et remonte les étapes.
 
     Contrat (à garder pour l'agent d'Oleksander ; `colette/fake_runner.py` le suit aussi) :
 
-        answer = await run(goal, on_step, ask_user=None) -> str
-            Phase 1. L'agent va jusqu'au récapitulatif et S'ARRÊTE sans rien valider.
-            La réponse se termine par une ligne `CONFIRMATION: <action + prix, verbe à
-            l'infinitif>` (ou `CONFIRMATION: aucune`) — voir `split_confirmation()`.
+        answer = await run(goal, on_step, ask_user=None, *, on_plan=None, on_step_done=None,
+                           confirm=None) -> str
+            on_plan(étapes) : l'agent annonce son plan (tool `annoncer_etapes`, en premier).
+            on_step_done(n) : l'étape n (à partir de 1) est finie (tool `etape_terminee`).
+            confirm(summary, costs_money) -> bool : tool `confirm_change`, appelé juste avant le
+            clic qui valide ; bloque jusqu'au oui/non de la personne. Si oui, l'agent valide
+            lui-même dans la même phase.
+            Garde-fou si l'agent n'appelle pas confirm_change : il s'arrête au récapitulatif et
+            termine par une ligne `CONFIRMATION: <action + prix, verbe à l'infinitif>`
+            (ou `CONFIRMATION: aucune`) — voir `split_confirmation()`.
             La session H reste ouverte (`idle`, idle_timeout_s=300) pour la phase 2.
         answer = await follow_up(message) -> str
             Phase 2, DANS LA MÊME SESSION, appelée par notre code (jamais par le LLM)
@@ -157,21 +233,33 @@ class DemarcheRunner:
         self._next_index = 0  # curseur d'events déjà lus (le follow_up repart d'ici)
 
     def _agent_spec(self, tools: list) -> dict:
+        skills = load_skills()
+        logger.info("Skills : {} + {}", H_SKILLS, [s["name"] for s in skills])
         spec: dict[str, Any] = {
             "name": "colette-local",
             "description": "Aide une personne âgée à faire une démarche dans son propre Chrome.",
             "instructions": self.instructions,
             "environments": [{"id": "laptop", "kind": "web", "host": "user_device"}],
+            "skills": H_SKILLS + skills,
         }
         if self.model:
             spec["model"] = self.model
         return spec
 
-    async def run(self, goal: str, on_step: OnStep, ask_user: Optional[AskUser] = None) -> str:
+    async def run(
+        self,
+        goal: str,
+        on_step: OnStep,
+        ask_user: Optional[AskUser] = None,
+        *,
+        on_plan: Optional[OnPlan] = None,
+        on_step_done: Optional[OnStepDone] = None,
+        confirm: Optional[Confirm] = None,
+    ) -> str:
         if self._client is None:
             self._client = AsyncClient()  # lit HAI_API_KEY
 
-        tools = []
+        tools = make_tools(on_plan=on_plan, on_step_done=on_step_done, confirm=confirm)
         if ask_user is not None:
 
             async def ask_user_tool(question: str) -> str:

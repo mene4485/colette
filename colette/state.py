@@ -120,6 +120,20 @@ class StateServer:
                 break
         self._broadcast()
 
+    def complete_through(self, number: int) -> None:
+        """Étapes 1..number faites, la suivante en cours (etape_terminee de l'agent H)."""
+        steps = self.state.steps
+        if not steps or number < 1:
+            return
+        for i, s in enumerate(steps, start=1):
+            if i <= number:
+                s["state"] = "done"
+            elif i == number + 1:
+                s["state"] = "doing"
+            elif s["state"] == "doing":
+                s["state"] = "todo"
+        self._broadcast()
+
     def finish_steps(self) -> None:
         for s in self.state.steps:
             s["state"] = "done"
