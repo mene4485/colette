@@ -163,6 +163,7 @@
        seuls Pause / Arrêter restent actifs (simple clic). */
     ".guard .side,.guard .side *{pointer-events:none}",
     ".guard .side .hold{pointer-events:auto}",
+    ".guard .side .typebox,.guard .side .typebox *{pointer-events:auto}",
     /* 06 · votre accord */
     ".tag{align-self:flex-start;background:#7A4A10;color:#fff;border-radius:8px;padding:6px 12px;font-size:16px;font-weight:800;margin-bottom:18px}",
     ".pts{list-style:none;padding:0;margin:18px 0 0;display:flex;flex-direction:column;gap:12px}",

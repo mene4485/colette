@@ -29,10 +29,15 @@ FREE_LOGIN = (
 )
 
 DEMO_LOGIN_TEXT = (
-    "Ce site est une maquette de démonstration avec un compte FICTIF. Si une page de connexion\n"
-    f"apparaît, tape toi-même l'identifiant {DEMO_LOGIN} dans le champ « Identifiant » et le mot de\n"
-    f"passe {DEMO_PASSWORD} dans le champ « Mot de passe », puis clique « Se connecter ». Ne demande\n"
-    "rien à la personne pour la connexion (ce sont des identifiants de démonstration, pas les siens).\n"
+    "Si une page de connexion apparaît : tu ne connais PAS les identifiants de la personne, demande-les-lui.\n"
+    "1. Appelle ask_user avec exactement : « Pour vous connecter, quel est votre identifiant Free ? Ce sont 8 chiffres. »\n"
+    "   Tape dans le champ « Identifiant » seulement les chiffres de sa réponse (« un deux trois » → 123, sans espaces).\n"
+    "2. Appelle ask_user avec exactement : « Et quel est votre mot de passe ? »\n"
+    "   Tape sa réponse dans le champ « Mot de passe », sans point final ni espace (un seul mot dit à voix haute :\n"
+    "   écris-le en minuscules).\n"
+    "3. Clique « Se connecter ». Si la page dit « Identifiant ou mot de passe incorrect », redemande seulement\n"
+    "   l'information qui semble fausse, une seule fois, puis réessaie.\n"
+    "N'invente jamais d'identifiant ni de mot de passe. Ne les répète pas dans tes messages.\n"
     "Si un bandeau de cookies apparaît, clique « Continuer sans accepter »."
 )
 

@@ -105,6 +105,16 @@ def _confirm_card(action: str, costs_money: bool) -> dict:
             "yes": f"Oui, {verb}", "no": "Non, ne rien changer"}
 
 
+def _types_herself(question: str) -> bool:
+    """Vrai site Free : la personne tape elle-même ses identifiants et dit « c'est bon ».
+    Maquette : l'agent demande l'identifiant puis le mot de passe, la réponse est la valeur."""
+    return is_login_question(question) and not site.is_demo()
+
+
+def _asks_secret(question: str) -> bool:
+    return "mot de passe" in normalize(question or "")
+
+
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "oui")
 
@@ -234,7 +244,7 @@ class VoiceGate(FrameProcessor):
                 logger.info("🎯 Pas de oui/non clair → rappel")
                 self._say_later("Dites simplement oui ou non.")
             return True
-        login_wait = self.pending and is_login_question(self._question)
+        login_wait = self.pending and _types_herself(self._question)
         if intent in ("pause", "resume") and login_wait:
             logger.info("🔇 Connexion en cours, « {} » ignoré : {!r}", intent, text)
             return True  # « attendez, je tape » : H attend déjà, rien à dire
@@ -245,14 +255,14 @@ class VoiceGate(FrameProcessor):
         if is_noise(text):  # bruit, « euh », « Merci. » fantôme sur l'écho : jamais au LLM
             if self.pending:
                 logger.info("🔇 Ignoré (bruit) pendant la question H : {!r}", text)
-                if not self._relanced and not is_login_question(self._question):
+                if not self._relanced and not _types_herself(self._question):
                     self._relanced = True
                     self._say_later(f"Je n'ai pas bien entendu. {self._question}".strip())
             else:
                 logger.info("🔇 Ignoré (bruit) : {!r}", text)
             return True
         if self.pending:
-            if is_login_question(self._question) and not is_login_done(text):
+            if _types_herself(self._question) and not is_login_done(text):
                 # La personne tape ses identifiants : on attend « c'est bon » sans rien dire.
                 logger.info("🔇 Connexion en cours, ignoré : {!r}", text)
                 return True
@@ -407,6 +417,10 @@ class ColetteVoice:
 
     def on_user_final(self, text: str) -> None:
         self._last_user_final_at = time.monotonic()
+        if self.gate.pending and _asks_secret(self.gate._question) and not is_noise(text):
+            self.state.update(heard="")
+            self.state.add_line("vous", "••••••••")  # mot de passe : jamais affiché
+            return
         if not is_noise(text):  # « Merci. » fantôme, « euh » : pas affiché
             self.state.update(heard="")  # la phrase en direct devient une bulle définitive
             self.state.add_line("vous", text)
@@ -414,6 +428,8 @@ class ColetteVoice:
             self.state.update(heard="")
 
     def on_user_interim(self, text: str) -> None:
+        if self.gate.pending and _asks_secret(self.gate._question):
+            return
         if text and not is_noise(text) and self.mic_open() and not self.bot_speaking and text != self.state.state.heard:
             self.state.update(heard=text)
 
@@ -558,7 +574,7 @@ class ColetteVoice:
         text = " ".join((text or "").split())[:500]
         if not text:
             return
-        logger.info("⌨️  {}", text)
+        logger.info("⌨️  texte tapé ({} caractères)", len(text))
         self.on_user_final(text)
         if self.gate.route(text):
             return
@@ -963,10 +979,13 @@ class ColetteVoice:
             answer = "(pas de réponse)"
         self._narrated_seq = self._step_seq
         self._last_narration = time.monotonic()  # pas de narration tout de suite : H regarde d'abord la page
-        if login_idx is not None and answer != "(pas de réponse)":
+        if login_idx is not None and site.is_demo() and not _asks_secret(question) and answer != "(pas de réponse)":
+            self._spawn_say("Merci.")
+        elif login_idx is not None and answer != "(pas de réponse)":
             self.state.complete_through(login_idx + 1)
             nxt = self._step_announcement(login_idx + 1)
-            self._spawn_say(("Merci, la connexion est faite. " + nxt).strip())
+            done = "Merci, je vous connecte. " if site.is_demo() else "Merci, la connexion est faite. "
+            self._spawn_say((done + nxt).strip())
         elif answer != "(pas de réponse)":
             self._spawn_say("Merci, je continue.")
         if self.working and self.state.state.status == "listening":

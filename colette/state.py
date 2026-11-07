@@ -216,7 +216,10 @@ class StateServer:
             logger.info("🖱️  clic {}x{} sur {}x{} → {} (trusted={})", msg.get("x"), msg.get("y"),
                         msg.get("w"), msg.get("h"), msg.get("target"), msg.get("trusted"))
             return
-        logger.info("Bulle → {}", json.dumps(msg, ensure_ascii=False))
+        if mtype == "text":  # texte tapé (peut être un mot de passe) : jamais dans les logs
+            logger.info("Bulle → texte tapé ({} caractères)", len(str(msg.get("text") or "")))
+        else:
+            logger.info("Bulle → {}", json.dumps(msg, ensure_ascii=False))
         if mtype == "open":
             self.set_open(True)
         elif mtype == "close":  # replie le panneau ; l'appel et la démarche continuent
