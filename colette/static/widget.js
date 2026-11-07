@@ -70,6 +70,7 @@
     "padding:6px 12px;border-radius:8px;white-space:nowrap}",
     ".typebox{display:flex;gap:8px}.typebox input{flex:1;min-width:0;font:inherit;font-size:17px;padding:12px 14px;border:1.5px solid #D3D8E2;border-radius:12px}",
     ".typebox button{font-size:16px;font-weight:800;padding:0 16px;border-radius:12px;border:2px solid " + BLUE + ";background:#fff;color:" + BLUE + "}",
+    ".hl{position:fixed;z-index:2147483646;pointer-events:none!important;animation:halo 1.6s ease-in-out infinite}",
     ".liveurl{color:#CBD5E1;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
     /* ---- panneau latéral ---- */
     ".side{position:fixed;top:0;right:0;bottom:0;width:" + PANEL_W + "px;background:#fff;color:" + INK + ";",
@@ -378,6 +379,60 @@
       })
       .catch(function () { f.submit(); });
   }, true);
+
+  // ---- la page de la personne suit celle de l'agent (mode en ligne) ----
+  // L'agent travaille dans son navigateur cloud ; à chaque nouvelle page, la page de la personne passe
+  // au même chemin (fetch + remplacement, sans rechargement : l'appel continue). Quand l'écran de
+  // l'agent se referme, la personne est donc au même endroit (ex. « Conso et factures »).
+  var syncedPath = "";
+  function syncPage(url) {
+    if (!HOSTED || !url) return;
+    var u;
+    try { u = new URL(url); } catch (e) { return; }
+    if (/^\/(colette|reset|favicon)|^\/account\/(login|logout)|\.pdf$/.test(u.pathname)) return;
+    var q = new URLSearchParams(u.search); q.delete("agent"); q.delete("__path");
+    var target = u.pathname + (q.toString() ? "?" + q.toString() : "");
+    if (target === syncedPath) return;
+    syncedPath = target;
+    if (target === location.pathname + location.search) return;
+    fetch(target, { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.text().then(function (t) { return [r, t]; }); })
+      .then(function (rt) {
+        if (/\/account\/login/.test(rt[0].url)) return;  // pas connectée sur sa page : on ne touche à rien
+        swapPage(rt[1], rt[0].url);
+        highlightDownload();
+      })
+      .catch(function () { /* ignore */ });
+  }
+
+  // Facture : l'agent ne télécharge pas (le fichier arriverait dans son navigateur cloud) ;
+  // on montre le bouton « Télécharger » sur la page de la personne, elle clique elle-même.
+  var hlBox = null, hlTarget = null, hlTimer = null;
+  function highlightDownload() {
+    var said = ((state.outcome && state.outcome.text) || "") + " " + lastColette();
+    if (state.busy || !/t[ée]l[ée]charg/i.test(said)) return;
+    var links = document.querySelectorAll("a,button");
+    hlTarget = null;
+    for (var i = 0; i < links.length; i++) {
+      if (/t[ée]l[ée]charger/i.test(links[i].textContent || "")) { hlTarget = links[i]; break; }
+    }
+    if (!hlTarget || !root) return;
+    if (!hlBox) {
+      hlBox = el("div", "mark hl");
+      hlBox.appendChild(el("span", null, "↓ Cliquez ici pour télécharger"));
+      root.appendChild(hlBox);
+    }
+    try { hlTarget.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { /* ignore */ }
+    hlTarget.addEventListener("click", function () { if (hlBox) hlBox.style.display = "none"; }, { once: true });
+    if (!hlTimer) hlTimer = setInterval(placeHighlight, 250);
+    placeHighlight();
+  }
+  function placeHighlight() {
+    if (!hlBox || !hlTarget || !hlTarget.isConnected) { if (hlBox) hlBox.style.display = "none"; return; }
+    var r = hlTarget.getBoundingClientRect(), pad = 6;
+    hlBox.style.left = (r.left - pad) + "px"; hlBox.style.top = (r.top - pad) + "px";
+    hlBox.style.width = (r.width + 2 * pad) + "px"; hlBox.style.height = (r.height + 2 * pad) + "px";
+  }
 
   // ---- écran de l'agent (mode en ligne) : captures du navigateur cloud de H ----
   function renderLive() {
@@ -857,8 +912,9 @@
           state = msg.state;
           if (HOSTED && state.login_handoff && !prev.login_handoff) tryHandoff(false);  // déjà connectée ?
           if (HOSTED && state.login_check && state.login_check !== prev.login_check) tryHandoff(true);
+          if (HOSTED && prev.busy && !state.busy) setTimeout(highlightDownload, 300);  // fin de démarche
           render();
-        } else if (msg.type === "screen") { shot = msg; renderLive(); }
+        } else if (msg.type === "screen") { shot = msg; renderLive(); syncPage(msg.url); }
         else if (msg.type === "busy") { busyServer = true; }
       } catch (e) { /* ignore */ }
     };
