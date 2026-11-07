@@ -13,6 +13,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Union
 
@@ -21,6 +22,9 @@ from hai_agents.tools import tool
 from loguru import logger
 
 from colette.chrome import ensure_chrome
+from colette.h_cleanup import delete_pending_channels, utcnow
+
+TERMINAL = {"completed", "failed", "timed_out", "interrupted"}
 
 
 @dataclass
@@ -141,13 +145,40 @@ class DemarcheRunner:
         raw_path = self.log_dir / f"h_events_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
         logger.info("Events bruts → {}", raw_path)
 
-        self._session = await self._client.start_session(
-            agent=self._agent_spec(tools),
-            messages=goal,
-            tools=tools or None,
-            max_time_s=self.max_time_s,
-            timezone="Europe/Paris",
-        )
+        # Marge de 5 s : le canal du bridge est créé juste après la session.
+        run_started = utcnow() - timedelta(seconds=5)
+        self._session = None
+        try:
+            self._session = await self._client.start_session(
+                agent=self._agent_spec(tools),
+                messages=goal,
+                tools=tools or None,
+                max_time_s=self.max_time_s,
+                idle_timeout_s=None,  # censé finir la session à la réponse ; en pratique elle reste `idle` → _cleanup() annule
+                timezone="Europe/Paris",
+            )
+            return await self._stream(raw_path, on_step)
+        finally:
+            await self._cleanup(run_started)
+
+    async def _cleanup(self, since: datetime) -> None:
+        """Termine la session si besoin et supprime son canal : libère le slot du quota H."""
+        try:
+            if self._session is not None:
+                status = str((await self._client.sessions.get_session_status(self._session.id)).status)
+                if status not in TERMINAL:
+                    logger.info("Session {} encore `{}` → cancel", self._session.id[:8], status)
+                    await self._session.cancel()
+        except Exception as e:
+            logger.debug("Fin de session H non confirmée : {}", e)
+        try:
+            n = await delete_pending_channels(since=since)
+            if n:
+                logger.info("{} canal(aux) H libéré(s)", n)
+        except Exception as e:
+            logger.warning("Nettoyage des canaux H impossible : {}", e)
+
+    async def _stream(self, raw_path: Path, on_step: OnStep) -> str:
         self.session_id = self._session.id
         logger.info("Session H {}", self.session_id)
         try:
