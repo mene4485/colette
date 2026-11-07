@@ -9,6 +9,8 @@
   window.__colette = { version: 1 };
 
   var WS_URL = "ws://localhost:8765";
+  var HOLD_MS = 800;  // appui maintenu exigé sur Pause/Stop pendant que l'agent H agit
+  var hold = null;    // {action, t0} — hors du DOM : render() reconstruit tout à chaque état
   var state = { open: false, status: "idle", steps: [], subtitle: "", confirm: null };
   var connected = false;
   var ws = null;
@@ -44,7 +46,24 @@
     ".ctrl button{flex:1;font-size:18px;font-weight:700;padding:12px 0;border-radius:12px;cursor:pointer;border:2px solid #6b2fd6;background:#fff;color:#6b2fd6}",
     ".ctrl .stop{border-color:#c62828;color:#c62828}",
     ".off{font-size:14px;color:#c62828;margin-top:10px}",
-    ".hidden{display:none!important}"
+    ".hidden{display:none!important}",
+    /* Panneau compact pendant que l'agent agit : ne masque pas les champs de la page. */
+    ".panel.compact{width:300px;padding:12px 14px;border-radius:16px}",
+    ".compact .head{margin-bottom:4px}.compact .title{font-size:17px}.compact .status{font-size:13px}",
+    ".compact .x{font-size:22px;padding:2px 6px}",
+    ".compact .sub{font-size:17px;line-height:1.3;min-height:0;margin:2px 0 8px}",
+    ".compact .steps{margin:0 0 8px}.compact .steps li{font-size:14px;padding:2px 0;gap:6px}",
+    ".compact .ico{width:18px}",
+    ".compact .ctrl button{font-size:14px;padding:7px 0;border-radius:10px}",
+    /* Pendant que H agit : le panneau laisse passer les clics vers la page (H ne peut ni le
+       cliquer ni le fermer) ; seuls Pause/Stop restent actifs, en appui maintenu (H fait des clics brefs). */
+    ".wrap{pointer-events:none}.wrap>*{pointer-events:auto}",
+    ".panel.compact{pointer-events:none;opacity:.92}",
+    ".compact .ctrl button{pointer-events:auto;position:relative;overflow:hidden}",
+    ".compact .ctrl button .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(107,47,214,.25)}",
+    ".compact .ctrl .stop .fill{background:rgba(198,40,40,.25)}",
+    ".compact .ctrl button.holding .fill{width:100%;transition:width " + HOLD_MS + "ms linear}",
+    ".hint{font-size:12px;color:#5b5370;text-align:center;margin-top:4px}"
   ].join("");
 
   var STATUS_TEXT = {
@@ -89,17 +108,20 @@
     wrap.textContent = "";
 
     if (state.open) {
-      var panel = el("div", "panel");
+      var compact = state.status === "working" && !state.confirm;
+      var panel = el("div", compact ? "panel compact" : "panel");
       panel.setAttribute("role", "dialog");
       var head = el("div", "head");
       var t = el("div");
       t.appendChild(el("div", "title", "🟣 Colette"));
       t.appendChild(el("div", "status", STATUS_TEXT[state.status] || state.status));
       head.appendChild(t);
-      var x = el("button", "x", "×");
-      x.setAttribute("aria-label", "Réduire");
-      x.onclick = function () { state.open = false; render(); send({ type: "close" }); };
-      head.appendChild(x);
+      if (!compact) {  // pas de fermeture pendant que H agit (il l'a déjà fait)
+        var x = el("button", "x", "×");
+        x.setAttribute("aria-label", "Réduire");
+        x.onclick = function () { state.open = false; render(); send({ type: "close" }); };
+        head.appendChild(x);
+      }
       panel.appendChild(head);
 
       panel.appendChild(el("div", "sub", state.subtitle || "Bonjour, que puis-je faire pour vous ?"));
@@ -116,7 +138,7 @@
 
       if (state.steps && state.steps.length) {
         var ul = el("ul", "steps");
-        var steps = state.steps.slice(-6);
+        var steps = state.steps.slice(compact ? -3 : -6);
         steps.forEach(function (s) {
           var li = el("li", s.state);
           li.appendChild(el("span", "ico", s.state === "done" ? "✅" : s.state === "doing" ? "👉" : "○"));
@@ -129,11 +151,17 @@
       var ctrl = el("div", "ctrl");
       var paused = state.status === "paused";
       var pause = el("button", "pause", paused ? "▶️ Reprendre" : "✋ Pause");
-      pause.onclick = function () { send({ type: paused ? "resume" : "pause" }); };
       var stop = el("button", "stop", "⏹ Stop");
-      stop.onclick = function () { send({ type: "stop" }); };
+      if (compact) {
+        holdable(pause, "pause");
+        holdable(stop, "stop");
+      } else {
+        pause.onclick = function () { send({ type: paused ? "resume" : "pause" }); };
+        stop.onclick = function () { send({ type: "stop" }); };
+      }
       ctrl.appendChild(pause); ctrl.appendChild(stop);
       panel.appendChild(ctrl);
+      if (compact) panel.appendChild(el("div", "hint", "Maintenez le bouton appuyé"));
 
       if (!connected) panel.appendChild(el("div", "off", "Connexion à Colette perdue… je réessaie."));
       wrap.appendChild(panel);
@@ -146,6 +174,29 @@
       wrap.appendChild(b);
     }
   }
+
+  // Bouton à appui maintenu : un clic bref (celui de l'agent H) ne fait rien.
+  function holdable(btn, action) {
+    btn.appendChild(el("span", "fill"));
+    btn.setAttribute("aria-label", btn.textContent + " (maintenir appuyé)");
+    if (hold && hold.action === action) btn.classList.add("holding");
+    btn.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      hold = { action: action, t0: Date.now() };
+      btn.classList.add("holding");
+    });
+  }
+  window.addEventListener("pointerup", function () {
+    if (!hold) return;
+    var h = hold; hold = null;
+    var held = Date.now() - h.t0;
+    if (held >= HOLD_MS) {
+      if (h.action === "stop") send({ type: "stop" });
+      else send({ type: state.status === "paused" ? "resume" : "pause" });
+    }
+    render();
+  }, true);
+  window.addEventListener("pointercancel", function () { hold = null; render(); }, true);
 
   function connect() {
     try { ws = new WebSocket(WS_URL); } catch (e) { setTimeout(connect, 1000); return; }

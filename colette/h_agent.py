@@ -52,7 +52,9 @@ DEFAULT_INSTRUCTIONS = (
     "confirmation explicite obtenue via ask_user. "
     "Une bulle violette « Colette » (et son panneau) s'affiche en bas à droite de chaque page : "
     "c'est ton interface avec la personne, elle ne fait pas partie du site. Ignore-la, ne clique "
-    "jamais dessus et ne la confonds pas avec le chat d'assistance du site."
+    "jamais dessus (ni sur ses boutons Pause, Stop ou ×), n'essaie pas de la fermer et ne la "
+    "confonds pas avec le chat d'assistance du site. Elle laisse passer les clics : si un élément "
+    "du site est en partie caché derrière elle, clique simplement sur cet élément."
 )
 
 

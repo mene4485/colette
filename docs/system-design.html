@@ -1,0 +1,214 @@
+<title>Colette System Design</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout : une colonne de lecture (~72ch), schémas en pleine largeur, tableau des échanges défilant seul. */
+:root {
+  --bg: #fbfaff; --surface: #ffffff; --fg: #1d1530; --muted: #5b5370; --line: #e3ddf2;
+  --accent: #6b2fd6; --accent-soft: #efe7ff; --ok: #2e7d32; --warn: #b26a00; --bad: #c62828;
+  --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141020; --surface: #1c1730; --fg: #ece8f7; --muted: #a79fbf; --line: #2f2848;
+  --accent: #a98bff; --accent-soft: #2a2148; --ok: #6cc070; --warn: #e0a64a; --bad: #ff7b7b; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141020; --surface: #1c1730; --fg: #ece8f7; --muted: #a79fbf; --line: #2f2848;
+  --accent: #a98bff; --accent-soft: #2a2148; --ok: #6cc070; --warn: #e0a64a; --bad: #ff7b7b; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 17px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 64px; }
+main { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+.prose { max-width: 72ch; }
+h1 { font-size: 2.3rem; line-height: 1.15; margin: 0; text-wrap: balance; }
+h2 { font-size: 1.45rem; margin: 0 0 12px; text-wrap: balance; }
+h3 { font-size: 1.05rem; margin: 0 0 6px; }
+p { margin: 0 0 10px; }
+.eyebrow { font: 600 .78rem/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+.lede { color: var(--muted); font-size: 1.1rem; margin-top: 12px; }
+code, .mono { font-family: var(--font-mono); font-size: .86em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.diagram svg { display: block; min-width: 860px; width: 100%; height: auto; }
+.box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.box.py { fill: var(--accent-soft); stroke: var(--accent); }
+.zone { fill: none; stroke: var(--muted); stroke-dasharray: 5 5; stroke-width: 1.2; }
+.t { fill: var(--fg); font: 700 14px var(--font-body); }
+.s { fill: var(--muted); font: 12px var(--font-body); }
+.z { fill: var(--muted); font: 600 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+.e { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+.e.ext { stroke: var(--muted); }
+.el { fill: var(--accent); font: 600 11px var(--font-mono); }
+.el.ext { fill: var(--muted); }
+.ah { fill: var(--accent); } .ah.ext { fill: var(--muted); }
+.flow { display: flex; flex-direction: column; gap: 0; border-left: 2px solid var(--line); margin-left: 8px; }
+.step { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 0 0 18px; position: relative; }
+.step .n { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--bg); font: 700 13px/26px var(--font-mono); text-align: center; margin-left: -14px; }
+.step .who { font: 600 .8rem var(--font-mono); color: var(--accent); }
+.step div { min-width: 0; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: .92rem; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 .75rem var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+tr:last-child td { border-bottom: none; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; min-width: 0; }
+.card p { color: var(--muted); font-size: .95rem; margin: 0; }
+.status { display: flex; flex-direction: column; gap: 8px; }
+.row { display: flex; gap: 10px; align-items: baseline; }
+.pill { flex: none; font: 600 .7rem var(--font-mono); text-transform: uppercase; letter-spacing: .05em; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); }
+@media (max-width: 520px) { h1 { font-size: 1.8rem; } body { font-size: 16px; } }
+</style>
+
+<main>
+  <header class="prose">
+    <div class="eyebrow">Hackathon H Company × 42AI · état au sam. 7 nov, 15h</div>
+    <h1>Colette, system design</h1>
+    <p class="lede">Une bulle sur free.fr, un programme Python sur le laptop, un agent H qui pilote Chrome. Ce document décrit qui parle à qui, par quel canal, et à quel moment.</p>
+  </header>
+
+  <section>
+    <h2>Vue d'ensemble</h2>
+    <p class="prose">Tout tourne dans un seul process Python (<code>scripts/run_colette.py</code>). Il relie quatre mondes : la bulle dans la page, la voix, l'agent H et Chrome. La page ne parle jamais directement à localhost (Chrome 156 bloque free.fr → localhost) : tout passe par le protocole de debug de Chrome (CDP).</p>
+    <div class="diagram">
+      <svg viewBox="0 0 980 520" role="img" aria-label="Schéma des composants de Colette">
+        <defs>
+          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah ext" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+        <!-- zones -->
+        <rect class="zone" x="10" y="10" width="300" height="500" rx="14"/>
+        <text class="z" x="26" y="34">Laptop · Chrome :9222</text>
+        <rect class="zone" x="340" y="10" width="360" height="500" rx="14"/>
+        <text class="z" x="356" y="34">Laptop · process Python</text>
+        <rect class="zone" x="730" y="10" width="240" height="500" rx="14"/>
+        <text class="z" x="746" y="34">Cloud</text>
+
+        <!-- Chrome -->
+        <rect class="box" x="30" y="60" width="260" height="88" rx="10"/>
+        <text class="t" x="46" y="88">Page free.fr</text>
+        <text class="s" x="46" y="108">site réel, piloté par H</text>
+        <text class="s" x="46" y="126">(clics, saisies, navigation)</text>
+        <rect class="box" x="30" y="180" width="260" height="104" rx="10"/>
+        <text class="t" x="46" y="208">Bulle Colette (widget.js)</text>
+        <text class="s" x="46" y="228">Shadow DOM, réinjectée à chaque page</text>
+        <text class="s" x="46" y="246">affiche étapes + sous-titres</text>
+        <text class="s" x="46" y="264">envoie open / stop / pause</text>
+        <rect class="box" x="30" y="330" width="260" height="70" rx="10"/>
+        <text class="t" x="46" y="358">Micro + haut-parleurs</text>
+        <text class="s" x="46" y="378">du laptop (sounddevice)</text>
+
+        <!-- Python -->
+        <rect class="box py" x="360" y="60" width="320" height="88" rx="10"/>
+        <text class="t" x="376" y="88">OverlayInjector + StateServer</text>
+        <text class="s" x="376" y="108">overlay.py · state.py</text>
+        <text class="s" x="376" y="126">état unique : statut, étapes, sous-titre</text>
+        <rect class="box py" x="360" y="180" width="320" height="140" rx="10"/>
+        <text class="t" x="376" y="208">ColetteVoice (Pipecat 1.15)</text>
+        <text class="s" x="376" y="228">voice.py</text>
+        <text class="s" x="376" y="250">MicGate → STT → VoiceGate → LLM</text>
+        <text class="s" x="376" y="268">→ TTS → sortie → StateTap</text>
+        <text class="s" x="376" y="290">tool async run_demarche(objectif)</text>
+        <rect class="box py" x="360" y="360" width="320" height="104" rx="10"/>
+        <text class="t" x="376" y="388">DemarcheRunner</text>
+        <text class="s" x="376" y="408">h_agent.py (ou fake_runner.py)</text>
+        <text class="s" x="376" y="426">SDK hai-agents, host: user_device</text>
+        <text class="s" x="376" y="444">bridge local → chromedriver</text>
+
+        <!-- Cloud -->
+        <rect class="box" x="750" y="60" width="200" height="56" rx="10"/>
+        <text class="t" x="766" y="84">Gladia</text>
+        <text class="s" x="766" y="102">STT FR · solaria-1</text>
+        <rect class="box" x="750" y="140" width="200" height="56" rx="10"/>
+        <text class="t" x="766" y="164">OpenRouter</text>
+        <text class="s" x="766" y="182">LLM · gemini-2.5-flash</text>
+        <rect class="box" x="750" y="220" width="200" height="56" rx="10"/>
+        <text class="t" x="766" y="244">Cartesia</text>
+        <text class="s" x="766" y="262">TTS · voix FR</text>
+        <rect class="box" x="750" y="360" width="200" height="104" rx="10"/>
+        <text class="t" x="766" y="388">H Agents API</text>
+        <text class="s" x="766" y="408">modèle Holo (computer use)</text>
+        <text class="s" x="766" y="426">décide l'action suivante</text>
+        <text class="s" x="766" y="444">depuis une capture d'écran</text>
+
+        <!-- edges -->
+        <path class="e" d="M360 104 H290" marker-end="url(#a)" marker-start="url(#a)"/>
+        <text class="el" x="300" y="96">CDP</text>
+        <path class="e" d="M360 120 C320 150 320 200 290 222" marker-end="url(#a)" marker-start="url(#a)"/>
+        <text class="el" x="296" y="168">binding</text>
+        <path class="e" d="M290 365 C330 365 330 300 360 290" marker-end="url(#a)" marker-start="url(#a)"/>
+        <text class="el" x="300" y="345">PCM 16k / 24k</text>
+        <path class="e" d="M520 180 V148" marker-end="url(#a)"/>
+        <text class="el" x="528" y="168">set_status / set_subtitle / add_step</text>
+        <path class="e" d="M520 320 V360" marker-end="url(#a)"/>
+        <text class="el" x="528" y="344">run(goal, on_step, ask_user)</text>
+        <path class="e ext" d="M680 200 C715 200 715 88 750 88" marker-end="url(#b)" marker-start="url(#b)"/>
+        <text class="el ext" x="690" y="130">WS</text>
+        <path class="e ext" d="M680 230 C720 230 720 168 750 168" marker-end="url(#b)" marker-start="url(#b)"/>
+        <text class="el ext" x="706" y="196">HTTPS</text>
+        <path class="e ext" d="M680 270 C720 270 720 248 750 248" marker-end="url(#b)" marker-start="url(#b)"/>
+        <text class="el ext" x="694" y="290">WS</text>
+        <path class="e ext" d="M680 412 H750" marker-end="url(#b)" marker-start="url(#b)"/>
+        <text class="el ext" x="694" y="404">HTTPS</text>
+        <path class="e" d="M360 440 C200 470 150 450 160 148" marker-end="url(#a)"/>
+        <text class="el" x="170" y="480">chromedriver · CDP (clics de H)</text>
+      </svg>
+    </div>
+  </section>
+
+  <section>
+    <h2>Un appel, du clic au résumé</h2>
+    <div class="flow prose">
+      <div class="step"><span class="n">1</span><div><div class="who">Bulle → StateServer</div><h3>La personne clique sur la bulle</h3><p>widget.js appelle <code>window.__coletteSend('{"type":"open"}')</code>. C'est un binding CDP : Chrome transmet le message à l'OverlayInjector, qui le passe au StateServer. Celui-ci met <code>open=true</code> et prévient ColetteVoice.</p></div></div>
+      <div class="step"><span class="n">2</span><div><div class="who">ColetteVoice → Cartesia → haut-parleurs</div><h3>Colette dit bonjour</h3><p>Un <code>TTSSpeakFrame</code> part vers Cartesia, l'audio revient en flux et sort des haut-parleurs. Chaque mot prononcé devient le sous-titre de la bulle (StateTap → <code>set_subtitle</code> → <code>Runtime.evaluate(onState)</code> dans chaque onglet).</p></div></div>
+      <div class="step"><span class="n">3</span><div><div class="who">Micro → Gladia → OpenRouter</div><h3>La personne parle</h3><p>MicGate laisse passer le micro seulement si la bulle est ouverte et que Colette se tait. L'audio part en continu vers Gladia, qui renvoie la transcription française. Le LLM reformule la demande et attend un « oui ».</p></div></div>
+      <div class="step"><span class="n">4</span><div><div class="who">OpenRouter → ColetteVoice → H</div><h3>Le LLM lance la démarche</h3><p>Il appelle le tool <code>run_demarche(objectif)</code>. C'est un appel asynchrone : la conversation continue pendant que le DemarcheRunner ouvre une session H. H regarde Chrome par captures d'écran et y agit via le bridge local et chromedriver.</p></div></div>
+      <div class="step"><span class="n">5</span><div><div class="who">H → DemarcheRunner → bulle + voix</div><h3>Chaque action devient une étape</h3><p>Chaque action de Holo (3 à 6 s chacune) est traduite en phrase par <code>describe_action</code>, ajoutée aux étapes de la bulle (panneau compact) et lue à voix haute directement, au plus une fois toutes les 5 s. Le LLM n'intervient pas, ce qui évite d'ajouter sa latence.</p></div></div>
+      <div class="step"><span class="n">6</span><div><div class="who">H → ColetteVoice → personne → H</div><h3>H a besoin d'une information</h3><p>H appelle son outil <code>ask_user(question)</code>. Colette lit la question ; VoiceGate attrape la prochaine phrase transcrite et la renvoie à H au lieu du LLM. Pour un mot de passe, la personne le tape elle-même dans la page.</p></div></div>
+      <div class="step"><span class="n">7</span><div><div class="who">H → OpenRouter → Cartesia</div><h3>Fin et résumé</h3><p>H rend sa réponse finale. Le runner libère le slot H (annulation de la session + suppression du canal). Le résultat revient au LLM, qui le résume en une ou deux phrases.</p></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Les canaux</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>De → vers</th><th>Canal</th><th>Contenu</th><th>Quand</th></tr></thead>
+        <tbody>
+          <tr><td>Python → bulle</td><td class="mono">CDP Runtime.evaluate</td><td>état complet (statut, étapes, sous-titre, carte OUI/NON)</td><td>à chaque changement d'état et à chaque nouvelle page (« hello »)</td></tr>
+          <tr><td>Bulle → Python</td><td class="mono">CDP Runtime.addBinding</td><td>open, close, stop, pause, resume, confirm</td><td>clic de la personne</td></tr>
+          <tr><td>Python → Chrome</td><td class="mono">CDP addScriptToEvaluateOnNewDocument</td><td>widget.js</td><td>chaque onglet, chaque navigation</td></tr>
+          <tr><td>Micro → Gladia</td><td class="mono">WebSocket</td><td>PCM 16 kHz (silence quand le micro est coupé)</td><td>en continu</td></tr>
+          <tr><td>Pipecat → OpenRouter</td><td class="mono">HTTPS streaming</td><td>historique + tool run_demarche</td><td>fin de chaque tour de parole</td></tr>
+          <tr><td>Pipecat → Cartesia</td><td class="mono">WebSocket</td><td>texte → audio 24 kHz + horodatage des mots</td><td>chaque phrase de Colette</td></tr>
+          <tr><td>Runner ⇄ H Agents API</td><td class="mono">HTTPS long-poll</td><td>events (actions, observations, réponse), outil ask_user</td><td>pendant run_demarche</td></tr>
+          <tr><td>Bridge H → Chrome</td><td class="mono">chromedriver / CDP</td><td>captures d'écran, clics, saisie</td><td>chaque action de Holo</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Garde-fous</h2>
+    <div class="grid2">
+      <div class="card"><h3>Anti-écho</h3><p>Le transport local n'a pas d'annulation d'écho. MicGate remplace le micro par du silence pendant que Colette parle, plus 0,4 s. Avec un casque, <code>COLETTE_BARGE_IN=1</code> permet de lui couper la parole.</p></div>
+      <div class="card"><h3>Réponses routées</h3><p>Quand H attend une réponse, VoiceGate envoie la transcription à H et coupe l'audio vers le LLM, pour que la réponse n'ouvre pas un tour de conversation.</p></div>
+      <div class="card"><h3>H ne peut pas toucher la bulle</h3><p>Pendant qu'il agit, le panneau laisse passer les clics vers la page et n'a plus de bouton ×. Pause et Stop demandent un appui maintenu de 0,8 s ; les clics de H sont instantanés.</p></div>
+      <div class="card"><h3>Pas d'action irréversible</h3><p>La consigne H interdit de cliquer sur Valider, Payer ou Résilier : H s'arrête sur le récapitulatif. La confirmation orale (OUI/NON) arrive à l'étape 4.</p></div>
+      <div class="card"><h3>Quota H (3 sessions)</h3><p>Une session à la fois. En fin de run, le runner annule la session si besoin et supprime le canal du bridge, sinon il bloque un slot pendant 30 min.</p></div>
+      <div class="card"><h3>Démo sans H</h3><p><code>--fake</code> rejoue un scénario Free Mobile avec la même interface que le vrai runner : voix, bulle et question réelles, sans consommer de session.</p></div>
+    </div>
+  </section>
+
+  <section class="prose">
+    <h2>État actuel</h2>
+    <div class="status">
+      <div class="row"><span class="pill ok">ok</span><span>Voix FR de bout en bout : accueil, dialogue, tool, résumé. Latence de 0,6 à 3 s après la fin de la phrase.</span></div>
+      <div class="row"><span class="pill ok">ok</span><span>Vrai H lancé à la voix : ouvre l'espace abonné, demande la connexion à l'oral, navigue.</span></div>
+      <div class="row"><span class="pill ok">ok</span><span>Bulle protégée des clics de H (corrigé et testé en clic CDP).</span></div>
+      <div class="row"><span class="pill bad">à faire</span><span>Réponse orale à H mal captée : une phrase mal transcrite a été prise pour la réponse.</span></div>
+      <div class="row"><span class="pill bad">à faire</span><span>Narration mêlée d'anglais (« Je clique sur The "Mes factures" tab »).</span></div>
+      <div class="row"><span class="pill warn">étape 4</span><span>oui / non / stop / pause à la voix, carte de confirmation déclenchée par H.</span></div>
+    </div>
+  </section>
+</main>

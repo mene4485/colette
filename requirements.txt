@@ -6,3 +6,9 @@ httpx
 
 # Étape 2 — bulle injectée via CDP + serveur d'état WS
 websockets>=13.1
+
+# Étape 3 — voix (micro/HP du laptop) : Gladia STT FR · OpenRouter LLM · Cartesia TTS FR
+# Pas d'extra [local] : PyAudio n'a pas de wheel arm64 → transport maison sur sounddevice
+# (colette/audio_local.py, PortAudio embarqué).
+pipecat-ai[gladia,cartesia,openrouter,silero]==1.15.*
+sounddevice
