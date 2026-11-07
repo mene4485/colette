@@ -106,6 +106,8 @@ class OverlayInjector:
             finally:
                 reader.cancel()
                 self._ws = None
+                self._attached.clear()
+                self._maybe_close()  # Chrome fermé : plus de bulle, plus de micro
                 for fut in self._pending.values():
                     if not fut.done():
                         fut.set_exception(CDPError("connexion CDP fermée"))
@@ -128,12 +130,20 @@ class OverlayInjector:
                 self._maybe_attach(params["targetInfo"])
             elif method == "Target.targetDestroyed":
                 self._attached.pop(params.get("targetId"), None)
+                self._maybe_close()
             elif method == "Runtime.bindingCalled" and params.get("name") == BINDING:
                 self._on_binding(msg.get("sessionId"), params.get("payload") or "")
             elif method == "Target.detachedFromTarget":
                 tid = params.get("targetId")
                 if tid and self._attached.get(tid) == params.get("sessionId"):
                     self._attached.pop(tid, None)
+                    self._maybe_close()
+
+    def _maybe_close(self) -> None:
+        """Plus aucun onglet avec la bulle : on la ferme (et donc le micro)."""
+        if not self._attached and self.state is not None and self.state.state.open:
+            logger.info("Plus aucun onglet ouvert → bulle fermée, micro coupé")
+            self.state.set_open(False)
 
     # ---- pont bulle ↔ StateServer ------------------------------------------
     def _on_binding(self, session_id: Optional[str], payload: str) -> None:

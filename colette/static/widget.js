@@ -215,6 +215,25 @@
   window.__colette.root = function () { return root; };
   window.__colette.onState = function (s) { connected = true; state = s; render(); };
 
+  // Quitter la page (autre onglet, fenêtre réduite) → on ferme la bulle, donc le micro.
+  // Délai : une navigation masque aussi le document, mais ses timers ne tournent plus ensuite.
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "hidden") return;
+    setTimeout(function () {
+      if (document.visibilityState === "hidden" && state.open) {
+        state.open = false; render(); send({ type: "close", reason: "page_hidden" });
+      }
+    }, 1500);
+  });
+
+  // Diagnostic : où atterrissent vraiment les clics (ceux de H inclus) ?
+  window.addEventListener("mousedown", function (e) {
+    var t = e.target, d = "";
+    if (t && t.tagName) d = t.tagName.toLowerCase() + (t.id ? "#" + t.id : "") + " " + ((t.innerText || t.value || "") + "").trim().slice(0, 40);
+    send({ type: "debug_click", x: Math.round(e.clientX), y: Math.round(e.clientY),
+           w: window.innerWidth, h: window.innerHeight, trusted: e.isTrusted, target: d });
+  }, true);
+
   function start() {
     build();
     if (hasBinding()) send({ type: "hello" });

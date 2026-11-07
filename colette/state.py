@@ -171,6 +171,10 @@ class StateServer:
     async def handle_message(self, msg: dict) -> None:
         """Traite un message de la bulle (quel que soit le transport)."""
         mtype = msg["type"]
+        if mtype == "debug_click":
+            logger.info("🖱️  clic {}x{} sur {}x{} → {} (trusted={})", msg.get("x"), msg.get("y"),
+                        msg.get("w"), msg.get("h"), msg.get("target"), msg.get("trusted"))
+            return
         logger.info("Bulle → {}", json.dumps(msg, ensure_ascii=False))
         if mtype == "open":
             self.set_open(True)

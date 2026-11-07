@@ -60,6 +60,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from colette.audio_local import LocalAudioTransport, LocalAudioTransportParams
 from colette.h_agent import Step
+from colette.narration import Narrator
 from colette.prompts import GREETING, H_GOAL_TEMPLATE, SYSTEM_PROMPT
 from colette.state import StateServer
 
@@ -191,6 +192,7 @@ class ColetteVoice:
 
         self.worker: Optional[PipelineWorker] = None
         self.gate = VoiceGate(self)
+        self.narrator = Narrator()
         state.on_client_message(self.on_client_message)
 
     # ---- état partagé entre processeurs ------------------------------------
@@ -386,8 +388,12 @@ class ColetteVoice:
         if step.kind != "step":
             logger.debug("[{}] {}", step.kind, step.text)
             return
-        text = _URL_RE.sub("la page", step.text).strip()
-        logger.info("👣 {}", text)
+        logger.info("👣 [H] {}", step.text)
+        text = await self.narrator.simplify(step)
+        if not text:
+            return  # action technique, ou phrase déjà dite
+        text = _URL_RE.sub("la page", text).strip()
+        logger.info("💬 {}", text)
         self.state.add_step(text[:80])
         now = time.monotonic()
         if now - self._last_narration >= NARRATE_MIN_GAP_S and not self.bot_speaking and not self.gate.pending:
