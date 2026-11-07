@@ -33,6 +33,17 @@ PREAMBLE = """\
 2. After finishing each of those steps, call `etape_terminee` with its number (starting at 1).
 3. Before any click that validates, saves, pays or cancels, call `confirm_change` and click only
    if the reply starts with "Approved".
+4. Asking the person (`ask_user`): she is elderly and speaks in small pieces. Ask ONE short question
+   per piece of information (e.g. for an address: number and street name, then postal code, then
+   city). Keep every piece she already gave you, even partial, and only ask for what is still
+   missing. Never ask her to repeat everything, never insist on getting it all in one answer.
+5. Long dropdown lists (street names, cities…): if you can type in the field, type the first letters
+   to filter the list, then click the matching option. Otherwise open the list and scroll THE LIST
+   itself with `scroll_web` and `scroll_element` set to the open list of options (not the page),
+   reading the options after each scroll. Options are often written "NAME (TYPE)", e.g.
+   "REPUBLIQUE (PLACE DE LA)": look for the name, ignore accents. Do not press the arrow keys one by
+   one. After 6 unsuccessful actions on the same list, stop and call `ask_user` (or answer that you
+   are stuck) instead of trying again.
 """
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 

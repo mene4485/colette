@@ -45,7 +45,7 @@
     ".frame{position:fixed;left:0;top:0;bottom:0;right:" + PANEL_W + "px;border:5px solid transparent;",
     "border-image:linear-gradient(90deg,#4F6BFF,#B66CE0 50%,#4F6BFF) 1;pointer-events:none!important}",
     ".mark{position:fixed;border:3px solid " + BLUE + ";border-radius:12px;pointer-events:none!important}",
-    ".mark span{position:absolute;left:18px;top:calc(100% + 6px);background:" + BLUE + ";color:#fff;font-size:15px;font-weight:700;",
+    ".mark span{position:absolute;left:18px;bottom:calc(100% + 6px);background:" + BLUE + ";color:#fff;font-size:15px;font-weight:700;",
     "padding:6px 14px;border-radius:8px;white-space:nowrap;pointer-events:none!important}",
     /* ---- panneau latéral ---- */
     ".side{position:fixed;top:0;right:0;bottom:0;width:" + PANEL_W + "px;background:#fff;color:" + INK + ";",
@@ -591,7 +591,7 @@
     markTarget = target;
     if (!markBox) {
       markBox = el("div", "mark");
-      markBox.appendChild(el("span", null, "↑ Je clique ici"));
+      markBox.appendChild(el("span", null, "↓ Je clique ici"));
     }
     if (!markTimer) markTimer = setInterval(updateMark, 300);
     updateMark();

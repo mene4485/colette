@@ -14,8 +14,9 @@ Only two details are covered: the contact email address and the postal address.
 If the person only wants to SEE their current details (voir, consulter, récupérer…), open
 "Mes infos personnelles", read the requested detail and give it in your answer. Change nothing,
 click no "Modifier" button.
-The new values come from the user's task. If the task does not give the complete new value, call
-`ask_user` to get it. Never invent or complete a value yourself.
+The new values come from the user's task. If a value is incomplete, ask only for the missing pieces
+with `ask_user`, one short question at a time, and keep what the person already said. Never invent or
+complete a value yourself.
 
 ## Where
 - https://mobile.free.fr/account/ → "Mon compte" → "Mes infos personnelles"
@@ -37,7 +38,12 @@ The new values come from the user's task. If the task does not give the complete
 
 ## Change the postal address
 1. In "Mon adresse postale", click "Modifier".
-2. Type the new address into the matching fields (street, postal code, city...). Check each field.
+2. If a piece of the new address is missing, ask for it with `ask_user`, one piece per question
+   (number and street name, then postal code, then city), keeping what the person already said.
+   Fill the form in its order: "Code postal" (type it), "Ville" (list), "Type de voie" (list: RUE,
+   PLACE, AVENUE, BOULEVARD…), "Nom de voie" (long list written "NAME (TYPE)", e.g.
+   "REPUBLIQUE (PLACE DE LA)": type the first letters of the name, or scroll the list itself),
+   then the street number. Check each field.
 3. When the page asks to re-enter the password: appelle `ask_user` pour que la personne le tape
    elle-même, puis attends.
 4. Call `confirm_change` with a summary such as: "remplacer l'adresse postale <ancienne> par <nouvelle>".
