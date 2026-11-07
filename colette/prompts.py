@@ -43,8 +43,10 @@ H_GOAL_TEMPLATE = """\
 Démarche demandée par la personne : {objectif}
 
 Commence par https://mobile.free.fr/account/ (espace abonné Free Mobile).
-Si une page de connexion apparaît, appelle ask_user pour demander à la personne de se connecter
-elle-même, puis attends sa réponse avant de continuer.
+Si une page de connexion apparaît, appelle ask_user avec exactement cette question : « Il faut
+vous connecter. Tapez vous-même votre identifiant et votre mot de passe, je ne regarde pas.
+Dites-moi « c'est bon » quand c'est fait. » Ne demande JAMAIS l'identifiant, le mot de passe ni
+un code : la personne les tape elle-même. Attends sa réponse avant de continuer.
 S'il faut choisir entre plusieurs options (par exemple plusieurs forfaits), appelle ask_user avec
 une question courte qui donne les options et leurs prix.
 Ne clique JAMAIS sur un bouton qui valide, confirme, paie ou résilie : arrête-toi juste avant,
