@@ -326,6 +326,7 @@ class ColetteVoice:
         self._latest_step: Optional[tuple[int, Step, float]] = None
         self._plan_announced = False  # H a appelé annoncer_etapes → la narration n'ajoute plus d'étapes
         self._fixed_plan = False  # plan tiré du skill, affiché dès le début : annoncer_etapes de H ignoré
+        self._announced_steps: set[int] = {0}  # étapes déjà annoncées « Maintenant, je vais… »
         self._confirmations: list[tuple[str, bool]] = []  # confirm_change de cette démarche (résumé, oui ?)
         self._approved = False  # la personne a dit oui à une action pendant cette démarche
         self._last_objectif = ""
@@ -580,6 +581,7 @@ class ColetteVoice:
         self._stopped = False
         self._plan_announced = False
         self._fixed_plan = False
+        self._announced_steps: set[int] = {0}  # la 1re étape est dite avec le plan
         self._confirmations = []
         self._approved = False
         self._last_objectif = objectif
@@ -706,6 +708,26 @@ class ColetteVoice:
         if steps and steps[-1]["label"] == VALIDATE_STEP:
             number = min(number, len(steps) - 1)  # « Valider » ne se coche qu'après le oui
         self.state.complete_through(number)
+        self._spawn_say(self._step_announcement(number))
+
+    def _step_announcement(self, idx: int) -> str:
+        """« Maintenant, je vais <étape idx (0-based)> » une seule fois par étape, sinon ""."""
+        steps = self.state.state.steps
+        if idx in self._announced_steps or not (0 <= idx < len(steps)):
+            return ""
+        label = steps[idx]["label"]
+        if label == VALIDATE_STEP:
+            return ""  # la carte d'accord s'en charge
+        self._announced_steps.add(idx)
+        return f"Maintenant, je vais {_lower_first(label)}."
+
+    def _spawn_say(self, text: str) -> None:
+        if not text or self._stopped or self.paused:
+            return
+        self._last_narration = time.monotonic() + 2.0  # la narration des clics ne passe pas par-dessus
+        task = asyncio.create_task(self.say(text))
+        self.gate._tasks.add(task)
+        task.add_done_callback(self.gate._tasks.discard)
 
     def _start_validate_step(self) -> None:
         """Met « Valider avec votre accord » en cours (l'ajoute s'il n'était pas annoncé)."""
@@ -872,6 +894,10 @@ class ColetteVoice:
         self._last_narration = time.monotonic()  # pas de narration tout de suite : H regarde d'abord la page
         if login_idx is not None and answer != "(pas de réponse)":
             self.state.complete_through(login_idx + 1)
+            nxt = self._step_announcement(login_idx + 1)
+            self._spawn_say(("Merci, la connexion est faite. " + nxt).strip())
+        elif answer != "(pas de réponse)":
+            self._spawn_say("Merci, je continue.")
         if self.working and self.state.state.status == "listening":
             self.state.set_status("paused" if self.paused else "working")
         logger.info("↳ réponse transmise à H : {}", answer)
