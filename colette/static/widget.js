@@ -229,7 +229,12 @@
   // Diagnostic : où atterrissent vraiment les clics (ceux de H inclus) ?
   window.addEventListener("mousedown", function (e) {
     var t = e.target, d = "";
-    if (t && t.tagName) d = t.tagName.toLowerCase() + (t.id ? "#" + t.id : "") + " " + ((t.innerText || t.value || "") + "").trim().slice(0, 40);
+    // Jamais la valeur d'un champ (mot de passe, identifiant…) : seulement balise, id et texte visible.
+    if (t && t.tagName) {
+      var isField = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable;
+      d = t.tagName.toLowerCase() + (t.id ? "#" + t.id : "") + (t.type ? "[" + t.type + "]" : "") +
+          (isField ? "" : " " + ((t.innerText || "") + "").trim().slice(0, 40));
+    }
     send({ type: "debug_click", x: Math.round(e.clientX), y: Math.round(e.clientY),
            w: window.innerWidth, h: window.innerHeight, trusted: e.isTrusted, target: d });
   }, true);
