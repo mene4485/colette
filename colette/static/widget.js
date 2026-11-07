@@ -22,6 +22,7 @@
   if (HOSTED) WS_URL = BACKEND.replace(/^http/, "ws") + "/ws";
   var IN_RATE = 16000, OUT_RATE = 24000;
   var audioCtx = null, micStream = null, micNode = null, playAt = 0, playing = [];
+  var outNode = null, outEl = null;
   var shot = null, liveEl = null, busyServer = false;
   var PANEL_W = 440;  // largeur du panneau ; la page est rétrécie d'autant (rien n'est caché)
   var state = { open: false, status: "idle", steps: [], subtitle: "", confirm: null };
@@ -226,6 +227,7 @@
       if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         playAt = 0;
+        makeOutput();
       }
       if (audioCtx.state === "suspended") audioCtx.resume();
     } catch (e) { return; }
@@ -259,6 +261,40 @@
       });
   }
 
+  // Sortie audio : AudioContext → WebRTC en boucle locale → <audio>. L'anti-écho de Chrome ne prend
+  // comme référence que le son joué par WebRTC : sans ça, le micro capte la voix de Colette et elle
+  // « se répond » (vu le 7 nov). Repli sur la sortie directe si la boucle ne se connecte pas.
+  function makeOutput() {
+    outNode = audioCtx.destination;
+    try {
+      var dest = audioCtx.createMediaStreamDestination();
+      var pc1 = new RTCPeerConnection(), pc2 = new RTCPeerConnection();
+      pc1.onicecandidate = function (e) { if (e.candidate) pc2.addIceCandidate(e.candidate); };
+      pc2.onicecandidate = function (e) { if (e.candidate) pc1.addIceCandidate(e.candidate); };
+      outEl = document.createElement("audio");
+      outEl.autoplay = true;
+      pc2.ontrack = function (e) { outEl.srcObject = e.streams[0]; outEl.play().catch(function () {}); };
+      dest.stream.getTracks().forEach(function (t) { pc1.addTrack(t, dest.stream); });
+      pc1.createOffer()
+        .then(function (o) { return pc1.setLocalDescription(o); })
+        .then(function () { return pc2.setRemoteDescription(pc1.localDescription); })
+        .then(function () { return pc2.createAnswer(); })
+        .then(function (a) { return pc2.setLocalDescription(a); })
+        .then(function () { return pc1.setRemoteDescription(pc2.localDescription); })
+        .catch(function () { /* repli : sortie directe */ });
+      var t0 = Date.now();
+      var check = setInterval(function () {
+        if (pc2.connectionState === "connected" || pc2.iceConnectionState === "connected" || pc2.iceConnectionState === "completed") {
+          clearInterval(check); outNode = dest; window.__colette.aec = "webrtc";
+        } else if (Date.now() - t0 > 3000) {
+          clearInterval(check); window.__colette.aec = "direct";
+        }
+      }, 100);
+      window.__colette.aec = "pending";
+      window.__colette.out = function () { return { paused: outEl.paused, t: outEl.currentTime, ice: pc2.iceConnectionState }; };
+    } catch (e) { outNode = audioCtx.destination; window.__colette.aec = "direct"; }
+  }
+
   function playPcm(buf) {
     if (!audioCtx) return;
     var pcm = new Int16Array(buf), n = pcm.length;
@@ -267,7 +303,7 @@
     for (var i = 0; i < n; i++) ch[i] = pcm[i] / 0x8000;
     var src = audioCtx.createBufferSource();
     src.buffer = b;
-    src.connect(audioCtx.destination);
+    src.connect(outNode || audioCtx.destination);
     var now = audioCtx.currentTime;
     if (playAt < now + 0.03) playAt = now + 0.08;  // petit tampon anti-saccades
     src.start(playAt);
@@ -689,7 +725,10 @@
       body.appendChild(box);
     }
     var row = el("div", "row2");
-    row.appendChild(button("sec", "Écouter ce résumé", function () { send({ type: "replay" }); }));
+    row.appendChild(button("sec", "Nouvelle demande", function () {
+      state.outcome = null; state.call = true; render();
+      send({ type: "reset" }); send({ type: "call" });
+    }));
     row.appendChild(button("dark", "Terminer l'appel", function () { state.open = false; render(); send({ type: "later" }); }));
     foot.appendChild(row);
   }

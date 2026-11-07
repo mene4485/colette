@@ -118,6 +118,18 @@ def _asks_secret(question: str) -> bool:
     return "mot de passe" in normalize(question or "")
 
 
+_BARGE_WORDS = re.compile(r"\b(non|attendez|attends|stop|arrete|arretez|pardon|excusez|minute|une seconde|taisez)\b")
+
+
+def _echo_score(heard: str, said: str) -> float:
+    """Part des mots transcrits qui viennent d'être prononcés par Colette (0–1). L'écho est souvent
+    transcrit de travers (« je suis Colette, je suis pour vous ») : on compte les mots, pas l'ordre."""
+    h, w = normalize(heard).split(), set(normalize(said).split())
+    if not h or not w:
+        return 0.0
+    return sum(1 for x in h if x in w) / len(h)
+
+
 def _env_flag(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "oui")
 
@@ -149,6 +161,7 @@ class VoiceGate(FrameProcessor):
         self._relanced = False
         self._last_remind = 0.0
         self._barged_at = 0.0
+        self._barge_hits = 0
         self._tasks: set[asyncio.Task] = set()
 
     @property
@@ -219,9 +232,11 @@ class VoiceGate(FrameProcessor):
     def _interrupts(self, text: str) -> bool:
         """Au moins 2 mots, pas du bruit, et pas l'écho de ce que Colette est en train de dire."""
         norm = normalize(text)
-        if len(norm.split()) < 2 or is_noise(text):
+        if len(norm.split()) < 4 or is_noise(text) or self.voice.is_echo(text):
             return False
-        return norm not in normalize(self.voice.state.state.subtitle or "")
+        said = " ".join([self.voice.state.state.subtitle or ""] + [l["text"] for l in self.voice.state.state.transcript[-2:]
+                                                                    if l.get("who") != "vous"])
+        return _echo_score(text, said) < 0.5  # surtout des mots à elle : de l'écho, pas une interruption
 
     def barge(self, text: str) -> None:
         """Transcription reçue pendant que Colette parle : seulement une commande courte, pas l'écho."""
@@ -297,7 +312,14 @@ class VoiceGate(FrameProcessor):
                     and not self.voice.mic_open():
                 # Colette parle : on n'écoute que « arrêtez / taisez-vous / quittez l'appel ».
                 text = (frame.text or "").strip()
-                if self.voice.free_barge and self._interrupts(text):
+                ok = self.voice.free_barge and self._interrupts(text)
+                # Écho déformé (« j'essus Khaled ») : une partielle isolée ne suffit pas, il en faut deux
+                # d'affilée (la suivante redevient de l'écho reconnaissable), ou la phrase finale.
+                self._barge_hits = self._barge_hits + 1 if ok else 0
+                # coupure immédiate sur une partielle seulement si elle commence comme une vraie
+                # interruption (« non », « attendez », « stop »…) ; sinon on attend la phrase finale.
+                quick = bool(_BARGE_WORDS.search(normalize(text)))
+                if ok and ((quick and self._barge_hits >= 2) or isinstance(frame, TranscriptionFrame)):
                     # Mode en ligne (anti-écho du navigateur) : une vraie phrase coupe Colette tout de
                     # suite (dès la transcription partielle), puis la phrase complète est traitée.
                     now = time.monotonic()
@@ -313,6 +335,11 @@ class VoiceGate(FrameProcessor):
                     return
                 if isinstance(frame, TranscriptionFrame) and text:
                     self.barge(text)
+                return
+            if isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame)) and \
+                    self.voice.is_echo((frame.text or "").strip()):
+                if isinstance(frame, TranscriptionFrame):
+                    logger.info("🔇 Écho de Colette ignoré : {!r}", frame.text)
                 return
             if isinstance(frame, TranscriptionFrame):
                 text = (frame.text or "").strip()
@@ -392,6 +419,8 @@ class ColetteVoice:
         self.handoff = handoff
         # mode en ligne : le navigateur supprime l'écho → une vraie phrase peut couper Colette
         self.free_barge = handoff or _env_flag("COLETTE_FREE_BARGE")
+        # en ligne, le son est joué par le navigateur avec un peu de retard (tampon) + réverbération
+        self.echo_tail = 0.9 if handoff else ECHO_TAIL_S
         # None : micro/HP du laptop (démo locale) ; sinon transport fourni (mode en ligne : WebSocket)
         self._transport = transport
         self._pipeline_params = pipeline_params or {}
@@ -443,7 +472,19 @@ class ColetteVoice:
             return True
         if self.bot_speaking:
             return False
-        return time.monotonic() - self.last_bot_stop > ECHO_TAIL_S
+        return time.monotonic() - self.last_bot_stop > self.echo_tail
+
+    def is_echo(self, text: str) -> bool:
+        """Sa propre voix captée par le micro (haut-parleurs, pas d'anti-écho sur notre son) :
+        phrase d'au moins 4 mots faite surtout de mots que Colette dit / vient de dire."""
+        if len(normalize(text).split()) < 4:
+            return False  # « oui c'est ça », « non » : jamais filtrés
+        recent = self.bot_speaking or time.monotonic() - self.last_bot_stop < 8.0
+        if not recent:
+            return False
+        said = [self.state.state.subtitle or ""] + [l["text"] for l in self.state.state.transcript[-3:]
+                                                    if l.get("who") != "vous"]
+        return _echo_score(text, " ".join(x for x in said if x)) >= 0.7
 
     def command_window(self) -> bool:
         """Colette parle (ou vient de se taire) : le micro reste ouvert mais seules les commandes
@@ -452,7 +493,7 @@ class ColetteVoice:
         st = self.state.state
         if not (st.call or st.busy) or st.status == "paused" or (self._stopped and self.working):
             return False
-        return self.bot_speaking or time.monotonic() - self.last_bot_stop <= ECHO_TAIL_S
+        return self.bot_speaking or time.monotonic() - self.last_bot_stop <= self.echo_tail
 
     def on_user_final(self, text: str) -> None:
         self._last_user_final_at = time.monotonic()
