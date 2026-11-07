@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Optional
 
 from loguru import logger
 
-SKILLS_DIR = Path(__file__).parent / "skills"
+from colette import site
+
+SKILLS_DIR = Path(__file__).parent / "skills"  # vrai Free ; la maquette : site.skills_dir()
 # Ajouté en tête de chaque skill : Holo suit le corps du skill bien plus que les instructions
 # générales (vu au vrai run du 7 nov : skill suivi à la lettre, annoncer_etapes jamais appelé).
 PREAMBLE = """\
@@ -75,7 +78,8 @@ def parse_skill(text: str, fallback_name: str) -> dict:
     return {"name": name, "description": description, "body": PREAMBLE + "\n" + body}
 
 
-def load_skills(directory: Path = SKILLS_DIR) -> list[dict]:
+def load_skills(directory: Optional[Path] = None) -> list[dict]:
+    directory = directory or site.skills_dir()
     skills = []
     for path in sorted(directory.glob("*.md")):
         try:
@@ -85,8 +89,9 @@ def load_skills(directory: Path = SKILLS_DIR) -> list[dict]:
     return skills
 
 
-def list_shortcuts(directory: Path = SKILLS_DIR) -> list[dict]:
+def list_shortcuts(directory: Optional[Path] = None) -> list[dict]:
     """Raccourcis de la bulle : [{"id": name, "label": str}] pour chaque skill qui a un `label`."""
+    directory = directory or site.skills_dir()
     items = []
     for path in directory.glob("*.md"):
         try:
@@ -117,9 +122,10 @@ def is_view_request(objectif: str) -> bool:
     return view and not change
 
 
-def match_plan(objectif: str, directory: Path = SKILLS_DIR) -> "tuple[str, list[str]] | None":
+def match_plan(objectif: str, directory: Optional[Path] = None) -> "tuple[str, list[str]] | None":
     """(skill, étapes) du premier skill dont un mot-clé apparaît dans l'objectif, sinon None.
     Demande de consultation → `steps_view` du skill s'il en a (rien à modifier ni à valider)."""
+    directory = directory or site.skills_dir()
     text = (objectif or "").lower()
     view = is_view_request(objectif)
     best = None

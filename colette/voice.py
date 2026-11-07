@@ -71,6 +71,7 @@ from pipecat.workers.runner import WorkerRunner
 from colette.audio_local import LocalAudioTransport, LocalAudioTransportParams
 from colette.h_agent import VALIDATE_STEP, Step, split_confirmation
 from colette.intents import is_login_done, is_login_question, is_noise, parse_intent
+from colette import site
 from colette.narration import Narrator
 from colette.prompts import CONFIRMED_FOLLOW_UP, GREETING, H_GOAL_TEMPLATE, SYSTEM_PROMPT
 from colette.skills_loader import is_view_request, list_shortcuts, match_plan
@@ -592,7 +593,9 @@ class ColetteVoice:
         result: dict
         speak = True  # le LLM résume-t-il ? (non : on a déjà tout dit nous-mêmes)
         try:
-            goal = H_GOAL_TEMPLATE.format(objectif=objectif or "changer de forfait Free Mobile")
+            goal = H_GOAL_TEMPLATE.format(objectif=objectif or "changer de forfait Free Mobile",
+                                          start_url=site.start_url(), site_label=site.site_label(),
+                                          login=site.login_instructions())
             plan = match_plan(objectif)
             if is_view_request(objectif):
                 goal += ("\nLa personne veut seulement CONSULTER une information : ne modifie rien, ne "

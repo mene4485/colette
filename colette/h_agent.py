@@ -17,15 +17,22 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Union
 
+import httpx
 from hai_agents import AsyncClient
 from hai_agents.tools import tool
 from loguru import logger
 
 from colette.chrome import ensure_chrome
 from colette.h_cleanup import delete_pending_channels, utcnow
+from colette import site
 from colette.skills_loader import load_skills
 
 TERMINAL = {"completed", "failed", "timed_out", "interrupted"}
+
+DEMO_EXCEPTION = (
+    " EXCEPTION (maquette de démonstration) : le compte est fictif ; les identifiants de démo donnés dans "
+    "la consigne ne sont pas ceux de la personne : tape-les toi-même, sans appeler ask_user pour la connexion."
+)
 
 
 @dataclass
@@ -217,12 +224,20 @@ class DemarcheRunner:
         self,
         *,
         model: Optional[str] = None,
-        instructions: str = DEFAULT_INSTRUCTIONS,
+        instructions: Optional[str] = None,
         max_time_s: float = 900,
         log_dir: Union[str, Path] = "logs",
+        host: str = "user_device",
+        on_screen: Optional[Callable[[dict], Union[None, Awaitable[None]]]] = None,
     ) -> None:
         self.model = model or os.getenv("HAI_MODEL") or None
+        if instructions is None:
+            instructions = DEFAULT_INSTRUCTIONS + (DEMO_EXCEPTION if site.is_demo() else "")
         self.instructions = instructions
+        # "user_device" : Chrome local :9222 (bridge) · "cloud" : navigateur hébergé par H (mode en ligne)
+        self.host = host
+        # mode cloud : appelé à chaque capture {"url", "title", "image": bytes PNG, "cursor": [x, y], "viewport": [w, h]}
+        self.on_screen = on_screen
         self.max_time_s = max_time_s
         self.log_dir = Path(log_dir)
         self._client: Optional[AsyncClient] = None
@@ -242,12 +257,36 @@ class DemarcheRunner:
             "name": "colette-local",
             "description": "Aide une personne âgée à faire une démarche dans son propre Chrome.",
             "instructions": self.instructions,
-            "environments": [{"id": "laptop", "kind": "web", "host": "user_device"}],
+            "environments": [self._environment()],
             "skills": H_SKILLS + skills,
         }
         if self.model:
             spec["model"] = self.model
         return spec
+
+    def _environment(self) -> dict:
+        if self.host == "cloud":
+            return {"id": "web", "kind": "web", "host": "cloud", "start_url": site.start_url()}
+        return {"id": "laptop", "kind": "web", "host": "user_device"}
+
+    async def _push_screen(self, image_url: str, meta: dict) -> None:
+        """Mode cloud : télécharge la capture (URL protégée par la clé H) et la passe à on_screen."""
+        if self.on_screen is None or self._client is None:
+            return
+        try:
+            key = os.getenv("HAI_API_KEY", "")
+            async with httpx.AsyncClient(timeout=10) as http:
+                r = await http.get(image_url, headers={"Authorization": f"Bearer {key}"})
+            if r.status_code != 200:
+                logger.debug("Capture H {} → HTTP {}", image_url[-40:], r.status_code)
+                return
+            await _maybe_await(self.on_screen({
+                "url": meta.get("url"), "title": meta.get("title"), "image": r.content,
+                "media_type": r.headers.get("content-type", "image/png"),
+                "cursor": meta.get("cursor_position"), "viewport": meta.get("viewport_size"),
+            }))
+        except Exception as e:
+            logger.debug("Capture H non relayée : {}", e)
 
     async def run(
         self,
@@ -282,7 +321,8 @@ class DemarcheRunner:
 
             tools.append(tool(ask_user_tool, name="ask_user"))
 
-        await asyncio.to_thread(ensure_chrome)
+        if self.host != "cloud":
+            await asyncio.to_thread(ensure_chrome)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         raw_path = self.log_dir / f"h_events_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
         logger.info("Events bruts → {}", raw_path)
@@ -351,6 +391,8 @@ class DemarcheRunner:
                     await self._session.cancel()
         except Exception as e:
             logger.debug("Fin de session H non confirmée : {}", e)
+        if self.host == "cloud":
+            return
         try:
             n = await delete_pending_channels(since=since)
             if n:
@@ -393,6 +435,9 @@ class DemarcheRunner:
                     elif kind == "observation_event":
                         meta = data.get("metadata") or {}
                         url = meta.get("url")
+                        image = data.get("image") or {}
+                        if self.on_screen is not None and image.get("type") == "url" and image.get("source"):
+                            asyncio.create_task(self._push_screen(image["source"], meta))
                         if url and url != last_url:
                             last_url = url
                             image = data.get("image") or {}

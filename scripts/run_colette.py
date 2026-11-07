@@ -1,7 +1,11 @@
-"""Colette — point d'entrée unique : bulle (CDP) + voix (micro/HP du laptop) + agent H.
+r"""Colette — point d'entrée unique : bulle (CDP) + voix (micro/HP du laptop) + agent H.
 
     .venv/bin/python scripts/run_colette.py --fake   # faux agent H (aucune session H consommée)
     .venv/bin/python scripts/run_colette.py          # vrai agent H (coûte une session H)
+    .venv/bin/python scripts/run_colette.py --demo-site   # maquette Free locale (compte fictif)
+    .venv/bin/python scripts/run_colette.py --site-url https://<projet>.vercel.app/account/  # maquette en ligne
+
+Windows : même chose avec  .venv\Scripts\python scripts\run_colette.py --fake
 
 Cliquer sur la bulle dans le Chrome :9222 → Colette dit bonjour et écoute.
 Options : --auto (ouvre la bulle et parle sans clic), --say "phrase" (répétable : simule la
@@ -16,7 +20,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import signal
 import sys
 from pathlib import Path
 
@@ -37,7 +40,10 @@ import certifi  # noqa: E402
 
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
-from colette.chrome import ensure_chrome  # noqa: E402
+from colette.chrome import ensure_chrome, open_tab  # noqa: E402
+from colette.platform_compat import add_stop_handler, setup_console  # noqa: E402
+
+setup_console()
 from colette.overlay import OverlayInjector  # noqa: E402
 from colette.state import StateServer  # noqa: E402
 
@@ -48,6 +54,10 @@ async def main() -> None:
     p.add_argument("--url", default="https://mobile.free.fr/")
     p.add_argument("--auto", action="store_true", help="ouvre la bulle et dit bonjour sans clic")
     p.add_argument("--say", action="append", default=[], help="phrase simulée (répétable)")
+    p.add_argument("--demo-site", action="store_true",
+                   help="lance la maquette Free Mobile locale (compte fictif) et l'utilise à la place du vrai site")
+    p.add_argument("--demo-port", type=int, default=8000)
+    p.add_argument("--site-url", default=None, help="maquette déjà en ligne (ex. https://<projet>.vercel.app/account/)")
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
@@ -57,7 +67,25 @@ async def main() -> None:
 
     from colette.voice import ColetteVoice  # import lourd (pipecat) après le logger
 
+    use_demo = args.demo_site or bool(args.site_url)
+    if use_demo:
+        os.environ["COLETTE_SITE"] = "demo"
+        if args.site_url:
+            os.environ["COLETTE_SITE_URL"] = args.site_url
+        else:
+            from colette.demo_site import start_in_thread
+
+            _demo_server, local_url = start_in_thread(args.demo_port)
+            os.environ["COLETTE_SITE_URL"] = local_url
+        from colette import site
+
+        args.url = site.start_url()
+        logger.info("Maquette Free Mobile : {} (identifiant {} · mot de passe {})",
+                    args.url, site.DEMO_LOGIN, site.DEMO_PASSWORD)
+
     await asyncio.to_thread(ensure_chrome, args.url)
+    if use_demo:
+        await asyncio.to_thread(open_tab, args.url)  # Chrome déjà ouvert : onglet sur la maquette
     server = StateServer()
     await server.start()
     injector = OverlayInjector(server)
@@ -77,8 +105,7 @@ async def main() -> None:
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGINT, stop.set)
-    loop.add_signal_handler(signal.SIGTERM, stop.set)
+    add_stop_handler(loop, stop.set)
     voice_task.add_done_callback(lambda _t: stop.set())
     logger.info("Prêt ({}). Ouvre {} dans le Chrome :9222 et clique sur la bulle. Ctrl+C pour quitter.",
                 "faux agent H" if args.fake else "vrai agent H", args.url)
