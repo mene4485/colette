@@ -9,6 +9,7 @@
   window.__colette = { version: 1 };
 
   var WS_URL = "ws://localhost:8765";
+  var PANEL_W = 360; // largeur du panneau latéral ; la page est rétrécie d'autant (rien n'est caché)
   var HOLD_MS = 800;  // appui maintenu exigé sur Pause/Stop pendant que l'agent H agit
   var hold = null;    // {action, t0} — hors du DOM : render() reconstruit tout à chaque état
   var state = { open: false, status: "idle", steps: [], subtitle: "", confirm: null };
@@ -63,7 +64,15 @@
     ".compact .ctrl button .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(107,47,214,.25)}",
     ".compact .ctrl .stop .fill{background:rgba(198,40,40,.25)}",
     ".compact .ctrl button.holding .fill{width:100%;transition:width " + HOLD_MS + "ms linear}",
-    ".hint{font-size:12px;color:#5b5370;text-align:center;margin-top:4px}"
+    ".hint{font-size:12px;color:#5b5370;text-align:center;margin-top:4px}",
+    /* Ouverte : panneau latéral pleine hauteur à droite ; la page est poussée à gauche (setPush). */
+    ".wrap.side{top:0;right:0;bottom:0;width:" + PANEL_W + "px;gap:0;align-items:stretch}",
+    ".side .panel,.side .panel.compact{width:100%;height:100%;max-height:none;border-radius:0;border:none;",
+    "border-left:4px solid #6b2fd6;box-shadow:-6px 0 24px rgba(40,10,90,.18);padding:22px 20px;display:flex;flex-direction:column}",
+    ".side .sub{font-size:24px}.side .compact .sub{font-size:22px;margin:6px 0 14px}",
+    ".side .compact .title{font-size:22px}.side .compact .status{font-size:15px}.side .compact .head{margin-bottom:10px}",
+    ".side .steps{flex:1;overflow:auto}.side .compact .steps li{font-size:16px;padding:4px 0}",
+    ".side .ctrl{margin-top:auto}.side .compact .ctrl button{font-size:17px;padding:12px 0}"
   ].join("");
 
   var STATUS_TEXT = {
@@ -104,8 +113,9 @@
   function render() {
     if (!root) return;
     var wrap = root.getElementById("wrap");
-    wrap.className = "wrap " + state.status;
+    wrap.className = "wrap " + state.status + (state.open ? " side" : "");
     wrap.textContent = "";
+    setPush(state.open);
 
     if (state.open) {
       var compact = state.status === "working" && !state.confirm;
@@ -138,7 +148,7 @@
 
       if (state.steps && state.steps.length) {
         var ul = el("ul", "steps");
-        var steps = state.steps.slice(compact ? -3 : -6);
+        var steps = state.steps.slice(-8);
         steps.forEach(function (s) {
           var li = el("li", s.state);
           li.appendChild(el("span", "ico", s.state === "done" ? "✅" : s.state === "doing" ? "👉" : "○"));
@@ -172,6 +182,64 @@
       b.appendChild(el("span", null, state.status === "idle" ? "Besoin d'aide ? Parlez à Colette" : "Colette"));
       b.onclick = function () { state.open = true; render(); send({ type: "open" }); };
       wrap.appendChild(b);
+    }
+  }
+
+  // ---- La page se pousse à gauche pour faire place au panneau (rien n'est caché dessous) ----
+  var pushStyle = null, pushed = false, fixTimer = null;
+  var FX = "data-colette-fx";
+
+  function setPush(on) {
+    if (on === pushed) return;
+    pushed = on;
+    if (on) {
+      if (!pushStyle) {
+        pushStyle = document.createElement("style");
+        pushStyle.setAttribute("data-colette", "1");
+        pushStyle.textContent = "html{margin-right:" + PANEL_W + "px!important;width:auto!important;" +
+          "max-width:calc(100vw - " + PANEL_W + "px)!important;overflow-x:hidden!important}";
+      }
+      (document.head || document.documentElement).appendChild(pushStyle);
+      fixFixed();
+      fixTimer = setInterval(fixFixed, 1500);  // bannières / en-têtes ajoutés après coup
+    } else {
+      if (pushStyle && pushStyle.parentNode) pushStyle.parentNode.removeChild(pushStyle);
+      clearInterval(fixTimer); fixTimer = null;
+      restoreFixed();
+    }
+    window.dispatchEvent(new Event("resize"));  // les sites recalculent leur mise en page
+  }
+
+  // Les éléments position:fixed se placent par rapport à la fenêtre, pas à <html> :
+  // on recale ceux qui débordent sous le panneau (bandeau cookies, en-tête, bouton de chat…).
+  function fixFixed() {
+    if (!pushed) return;
+    var limit = window.innerWidth - PANEL_W;
+    var all = document.body ? document.body.getElementsByTagName("*") : [];
+    for (var i = 0; i < all.length && i < 5000; i++) {
+      var e = all[i];
+      if (e === host || e.hasAttribute(FX)) continue;
+      var cs = getComputedStyle(e);
+      if (cs.position !== "fixed" && cs.position !== "sticky") continue;
+      var r = e.getBoundingClientRect();
+      if (r.width === 0 || r.right <= limit + 1) continue;
+      e.setAttribute(FX, JSON.stringify({ right: e.style.right, maxWidth: e.style.maxWidth, left: e.style.left }));
+      if (r.left > limit - r.width / 2 && r.width < limit) {  // ancré à droite (ex. bouton de chat)
+        var right = parseFloat(cs.right) || 0;
+        e.style.setProperty("right", (right + PANEL_W) + "px", "important");
+      } else {  // pleine largeur (bandeau, en-tête) : on le borne à la zone de la page
+        e.style.setProperty("max-width", "calc(100vw - " + PANEL_W + "px)", "important");
+      }
+    }
+  }
+
+  function restoreFixed() {
+    var fixed = document.querySelectorAll("[" + FX + "]");
+    for (var i = 0; i < fixed.length; i++) {
+      var e = fixed[i], o = {};
+      try { o = JSON.parse(e.getAttribute(FX)) || {}; } catch (err) { /* ignore */ }
+      e.style.right = o.right || ""; e.style.maxWidth = o.maxWidth || ""; e.style.left = o.left || "";
+      e.removeAttribute(FX);
     }
   }
 
