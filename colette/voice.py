@@ -351,9 +351,8 @@ class VoiceGate(FrameProcessor):
                 elif self._capturing():
                     return
             elif isinstance(frame, InterimTranscriptionFrame):
-                self.voice.on_user_interim((frame.text or "").strip())  # « Vous » en direct dans la bulle
-                if self._capturing():
-                    return
+                # Partielles jamais affichées ni envoyées plus loin (hallucinations sur le bruit).
+                return
             elif isinstance(frame, InputAudioRawFrame) and self._capturing():
                 # Pas de VAD côté agrégateur pendant une question H ou la carte OUI/NON :
                 # la réponse ne doit pas ouvrir un tour de parole pour le LLM.
@@ -543,7 +542,8 @@ class ColetteVoice:
             settings=GladiaSTTService.Settings(
                 model="solaria-1",
                 language_config=LanguageConfig(languages=["fr"], code_switching=False),
-                # partielles : « Vous dites… » en direct et interruption dès les premiers mots
+                # Partielles : servent SEULEMENT à couper Colette sur « non / attendez / stop… ». Jamais
+                # affichées : sur le bruit de fond, Gladia invente des débuts de phrase (« On tire ! »).
                 messages_config=MessagesConfig(receive_partial_transcripts=True),
             ),
         )
