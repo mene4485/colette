@@ -1,0 +1,4 @@
+# Étape 1 — agent H (pilote le Chrome local, host: user_device)
+hai-agents[cli,browser]==1.4.3
+python-dotenv
+loguru
