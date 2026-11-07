@@ -140,10 +140,34 @@ class OverlayInjector:
                     self._maybe_close()
 
     def _maybe_close(self) -> None:
-        """Plus aucun onglet avec la bulle : on la ferme (et donc le micro)."""
-        if not self._attached and self.state is not None and self.state.state.open:
-            logger.info("Plus aucun onglet ouvert → bulle fermée, micro coupé")
-            self.state.set_open(False)
+        """Plus aucun onglet avec la bulle ? On revérifie dans 3 s : une navigation ou un nouvel
+        onglet (PDF de facture…) ne doit jamais fermer Colette ni arrêter la démarche."""
+        if self._attached or self.state is None:
+            return
+        if self._ws is None:  # Chrome fermé (connexion CDP perdue)
+            self._close_call("Chrome fermé")
+            return
+        self._spawn(self._recheck_targets())
+
+    async def _recheck_targets(self) -> None:
+        await asyncio.sleep(3)
+        if self._attached or self._ws is None:
+            return
+        try:
+            targets = (await self.send("Target.getTargets"))["targetInfos"]
+        except Exception:
+            return
+        pages = [t for t in targets if t.get("type") == "page"]
+        for t in pages:  # onglet détaché (changement de processus) : on le reprend
+            self._maybe_attach(t)
+        if not pages:
+            self._close_call("plus aucun onglet")
+
+    def _close_call(self, why: str) -> None:
+        st = self.state.state
+        if st.open or st.call:
+            logger.info("{} → bulle fermée, micro coupé (la démarche n'est pas arrêtée)", why)
+            self.state.update(open=False, call=False)
 
     # ---- pont bulle ↔ StateServer ------------------------------------------
     def _on_binding(self, session_id: Optional[str], payload: str) -> None:

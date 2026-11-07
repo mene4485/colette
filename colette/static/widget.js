@@ -658,16 +658,8 @@
   window.__colette.root = function () { return root; };
   window.__colette.onState = function (s) { connected = true; state = s; render(); };
 
-  // Quitter la page (autre onglet, fenêtre réduite) → on ferme la bulle, donc le micro.
-  // Délai : une navigation masque aussi le document, mais ses timers ne tournent plus ensuite.
-  document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState !== "hidden") return;
-    setTimeout(function () {
-      if (document.visibilityState === "hidden" && state.open) {
-        state.open = false; render(); send({ type: "close", reason: "page_hidden" });
-      }
-    }, 1500);
-  });
+  // Changer de page ou d'onglet ne ferme JAMAIS la bulle : l'état vit côté serveur et la bulle
+  // réinjectée dans la nouvelle page reprend là où elle en était (appel et démarche continuent).
 
   // Diagnostic : où atterrissent vraiment les clics (ceux de H inclus) ? + cadre « Colette est ici ».
   window.addEventListener("mousedown", function (e) {

@@ -336,7 +336,7 @@ class ColetteVoice:
     # ---- état partagé entre processeurs ------------------------------------
     def mic_open(self) -> bool:
         st = self.state.state
-        if not st.open or not (st.call or st.busy):
+        if not (st.call or st.busy):
             return False
         if st.status == "paused" and not self.working:
             return False  # « Pause » pendant l'appel : Colette n'écoute plus
@@ -502,7 +502,7 @@ class ColetteVoice:
                 self.state.update(heard=request)
                 logger.info("🔘 Raccourci {} → {!r}", msg.get("id"), request)
                 await self._ask_llm(request)
-        elif t in ("hangup", "close", "later"):
+        elif t in ("hangup", "later"):  # « close » (Fermer, changement de page) n'arrête rien
             if running and not self._stopped:
                 await self.state.handle_message({"type": "stop", "source": t})
             elif t == "hangup":

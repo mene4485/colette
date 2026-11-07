@@ -219,7 +219,9 @@ class StateServer:
         logger.info("Bulle → {}", json.dumps(msg, ensure_ascii=False))
         if mtype == "open":
             self.set_open(True)
-        elif mtype in ("close", "later"):
+        elif mtype == "close":  # replie le panneau ; l'appel et la démarche continuent
+            self.update(open=False)
+        elif mtype == "later":
             self.update(open=False, call=False, heard="")
         elif mtype in ("call", "shortcut"):
             self.update(open=True, call=True, heard="",
