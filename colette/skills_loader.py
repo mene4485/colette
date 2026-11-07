@@ -10,7 +10,7 @@ Chaque fichier commence par un front matter :
 
 Aucune liste en dur : tout fichier `.md` déposé dans le dossier est envoyé à l'agent.
 Champs facultatifs (bulle seulement, jamais envoyés à H) : `label` (raccourci de l'écran 2,
-en français), `order` (tri des raccourcis), `keywords`, `steps` et `steps_view` (séparés par
+en français), `ask` (phrase envoyée comme si la personne l'avait dite), `order` (tri des raccourcis), `keywords`, `steps` et `steps_view` (séparés par
 « | ») : plan affiché dès le début quand un mot-clé apparaît dans l'objectif de la démarche
 (`steps_view` quand la personne veut seulement consulter).
 """
@@ -86,7 +86,8 @@ def list_shortcuts(directory: Path = SKILLS_DIR) -> list[dict]:
                 order = int(meta.get("order", "99"))
             except ValueError:
                 order = 99
-            items.append((order, {"id": meta.get("name") or path.stem, "label": meta["label"]}))
+            items.append((order, {"id": meta.get("name") or path.stem, "label": meta["label"],
+                                  "ask": meta.get("ask", "")}))
     return [item for _, item in sorted(items, key=lambda x: (x[0], x[1]["label"]))]
 
 

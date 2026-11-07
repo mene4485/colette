@@ -239,8 +239,10 @@ class VoiceGate(FrameProcessor):
                         return
                 elif self._capturing():
                     return
-            elif isinstance(frame, InterimTranscriptionFrame) and self._capturing():
-                return
+            elif isinstance(frame, InterimTranscriptionFrame):
+                self.voice.on_user_interim((frame.text or "").strip())  # « Vous » en direct dans la bulle
+                if self._capturing():
+                    return
             elif isinstance(frame, InputAudioRawFrame) and self._capturing():
                 # Pas de VAD côté agrégateur pendant une question H ou la carte OUI/NON :
                 # la réponse ne doit pas ouvrir un tour de parole pour le LLM.
@@ -350,8 +352,14 @@ class ColetteVoice:
     def on_user_final(self, text: str) -> None:
         self._last_user_final_at = time.monotonic()
         if not is_noise(text):  # « Merci. » fantôme, « euh » : pas affiché
-            self.state.update(heard=text)
+            self.state.update(heard="")  # la phrase en direct devient une bulle définitive
             self.state.add_line("vous", text)
+        elif self.state.state.heard:
+            self.state.update(heard="")
+
+    def on_user_interim(self, text: str) -> None:
+        if text and not is_noise(text) and self.mic_open() and text != self.state.state.heard:
+            self.state.update(heard=text)
 
 
     def on_bot_started(self) -> None:
@@ -496,9 +504,9 @@ class ColetteVoice:
                     self.state.set_subtitle("Je vous écoute.")
                     await self.say("Je vous écoute.")
         elif t == "shortcut":
-            label = next((s["label"] for s in self.state.state.shortcuts if s["id"] == msg.get("id")), "")
-            if label and not running:
-                request = f"Je voudrais {_lower_first(label)}."
+            sc = next((s for s in self.state.state.shortcuts if s["id"] == msg.get("id")), None)
+            if sc and not running:
+                request = sc.get("ask") or f"Je voudrais {_lower_first(sc['label'])}."
                 self.greeted = True  # pas d'accueil par-dessus : la demande part tout de suite
                 self.state.update(heard=request)
                 logger.info("🔘 Raccourci {} → {!r}", msg.get("id"), request)
