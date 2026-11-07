@@ -2,3 +2,4 @@
 hai-agents[cli,browser]==1.4.3
 python-dotenv
 loguru
+httpx

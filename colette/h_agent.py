@@ -7,6 +7,7 @@ remplacera l'implémentation en gardant le même contrat.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import os
@@ -18,6 +19,8 @@ from typing import Any, Awaitable, Callable, Optional, Union
 from hai_agents import AsyncClient
 from hai_agents.tools import tool
 from loguru import logger
+
+from colette.chrome import ensure_chrome
 
 
 @dataclass
@@ -104,6 +107,7 @@ class DemarcheRunner:
 
             tools.append(tool(ask_user_tool, name="ask_user"))
 
+        await asyncio.to_thread(ensure_chrome)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         raw_path = self.log_dir / f"h_events_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
         logger.info("Events bruts → {}", raw_path)
