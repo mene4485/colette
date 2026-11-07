@@ -48,8 +48,9 @@ DEFAULT_INSTRUCTIONS = (
     "Si une information te manque (identifiant, choix, code reçu par SMS), ou si une page de "
     "connexion apparaît, appelle l'outil ask_user et attends la réponse ; ne devine jamais. "
     "Ne tape jamais de mot de passe toi-même : demande à la personne de le taper. "
-    "Ne clique jamais sur un bouton qui valide, paie, résilie ou envoie quelque chose sans "
-    "confirmation explicite obtenue via ask_user. "
+    "Ne clique jamais sur un bouton qui valide, paie, résilie ou envoie quelque chose tant qu'un "
+    "message ne t'a pas dit explicitement que la personne a confirmé à voix haute ; arrête-toi "
+    "avant et réponds. "
     "Une bulle violette « Colette » (et son panneau) s'affiche en bas à droite de chaque page : "
     "c'est ton interface avec la personne, elle ne fait pas partie du site. Ignore-la, ne clique "
     "jamais dessus (ni sur ses boutons Pause, Stop ou ×), n'essaie pas de la fermer et ne la "
@@ -89,12 +90,48 @@ async def _maybe_await(value: Any) -> None:
         await value
 
 
+CONFIRMATION_PREFIX = "CONFIRMATION:"
+
+
+def split_confirmation(answer: str) -> tuple[str, Optional[str]]:
+    """Sépare la ligne `CONFIRMATION: …` de la réponse de phase 1.
+
+    Renvoie (réponse sans la ligne, action à confirmer) ; action = None si absente ou « aucune ».
+    """
+    body, action = [], None
+    for line in (answer or "").splitlines():
+        stripped = line.strip().lstrip("*-# ").strip()
+        if stripped.upper().startswith(CONFIRMATION_PREFIX):
+            value = stripped[len(CONFIRMATION_PREFIX):].strip().strip("*«»\"' ").rstrip(".")
+            if value and value.lower() not in ("aucune", "aucun", "rien", "none", "non"):
+                action = value
+        else:
+            body.append(line)
+    return "\n".join(body).strip(), action
+
+
 class DemarcheRunner:
     """Lance une démarche dans le Chrome local et remonte les étapes.
 
-    Contrat stable :
-        await run(goal, on_step, ask_user=None) -> str  (réponse finale de l'agent)
+    Contrat (à garder pour l'agent d'Oleksander ; `colette/fake_runner.py` le suit aussi) :
+
+        answer = await run(goal, on_step, ask_user=None) -> str
+            Phase 1. L'agent va jusqu'au récapitulatif et S'ARRÊTE sans rien valider.
+            La réponse se termine par une ligne `CONFIRMATION: <action + prix, verbe à
+            l'infinitif>` (ou `CONFIRMATION: aucune`) — voir `split_confirmation()`.
+            La session H reste ouverte (`idle`, idle_timeout_s=300) pour la phase 2.
+        answer = await follow_up(message) -> str
+            Phase 2, DANS LA MÊME SESSION, appelée par notre code (jamais par le LLM)
+            seulement après un « oui » oral explicite ou un clic OUI. Mêmes on_step / ask_user.
+        await close()
+            Termine la session et libère le slot du quota H. Toujours appelée à la fin de la
+            démarche (oui, non, stop ou erreur). Idempotente.
         await cancel() / pause() / resume()
+            Bouton ou commande vocale Stop / Pause / Reprise pendant que l'agent travaille.
+            Après cancel(), run()/follow_up() rendent la main (réponse vide ou exception).
+
+        on_step(Step) peut être sync ou async ; il doit rendre la main vite (pas d'attente longue).
+        ask_user(question) -> réponse orale de la personne (str).
     """
 
     def __init__(
@@ -113,6 +150,11 @@ class DemarcheRunner:
         self._session = None
         self.session_id: Optional[str] = None
         self.status: Optional[str] = None
+        self.idle_timeout_s = 300  # la session reste ouverte après la phase 1 (follow_up)
+        self._on_step: Optional[OnStep] = None
+        self._raw_path: Optional[Path] = None
+        self._run_started: Optional[datetime] = None
+        self._next_index = 0  # curseur d'events déjà lus (le follow_up repart d'ici)
 
     def _agent_spec(self, tools: list) -> dict:
         spec: dict[str, Any] = {
@@ -148,20 +190,58 @@ class DemarcheRunner:
         logger.info("Events bruts → {}", raw_path)
 
         # Marge de 5 s : le canal du bridge est créé juste après la session.
-        run_started = utcnow() - timedelta(seconds=5)
+        self._run_started = utcnow() - timedelta(seconds=5)
         self._session = None
+        self._on_step = on_step
+        self._raw_path = raw_path
+        self._next_index = 0
         try:
             self._session = await self._client.start_session(
                 agent=self._agent_spec(tools),
                 messages=goal,
                 tools=tools or None,
                 max_time_s=self.max_time_s,
-                idle_timeout_s=None,  # censé finir la session à la réponse ; en pratique elle reste `idle` → _cleanup() annule
+                idle_timeout_s=self.idle_timeout_s,
                 timezone="Europe/Paris",
             )
             return await self._stream(raw_path, on_step)
-        finally:
-            await self._cleanup(run_started)
+        except BaseException:
+            await self.close()
+            raise
+
+    async def follow_up(self, message: str) -> str:
+        """Phase 2 : envoie un message dans la même session et attend la nouvelle réponse."""
+        if self._session is None or self._on_step is None:
+            raise RuntimeError("follow_up() sans session ouverte (run() d'abord, close() pas encore appelé)")
+        status = str((await self._client.sessions.get_session_status(self._session.id)).status)
+        if status in TERMINAL:
+            raise RuntimeError(f"La session H est déjà terminée ({status}) : impossible de valider")
+        logger.info("Follow-up H : {}", message)
+        try:
+            await self._session.send_message(message)
+            # Le stream s'arrête dès que la session est « settled » (idle) : attendre qu'elle
+            # reparte, sinon on relirait l'état idle de la phase 1.
+            for _ in range(40):
+                status = str((await self._client.sessions.get_session_status(self._session.id)).status)
+                if status != "idle":
+                    break
+                await asyncio.sleep(0.5)
+            else:
+                logger.warning("La session H est restée idle après le follow-up")
+            return await self._stream(self._raw_path, self._on_step)
+        except BaseException:
+            await self.close()
+            raise
+
+    async def close(self) -> None:
+        """Termine la session (si besoin) et libère son canal. Idempotente."""
+        if self._session is None and self._run_started is None:
+            return
+        since = self._run_started or utcnow()
+        await self._cleanup(since)
+        self._session = None
+        self._run_started = None
+        self._on_step = None
 
     async def _cleanup(self, since: datetime) -> None:
         """Termine la session si besoin et supprime son canal : libère le slot du quota H."""
@@ -194,7 +274,8 @@ class DemarcheRunner:
         answer: Optional[str] = None
         last_url: Optional[str] = None
         with raw_path.open("a") as raw:
-            async for ev in self._session.stream(timeout_seconds=self.max_time_s + 60):
+            async for ev in self._session.stream(from_index=self._next_index, timeout_seconds=self.max_time_s + 60):
+                self._next_index += 1
                 d = ev.model_dump(mode="json")
                 raw.write(json.dumps(d, ensure_ascii=False) + "\n")
                 raw.flush()
@@ -242,7 +323,9 @@ class DemarcheRunner:
         logger.info("Fin de session : status={} outcome={}", result.status, result.outcome)
         if result.error:
             logger.error("Erreur : {} ({})", result.error, result.error_code)
-        final = result.answer if result.answer is not None else answer
+        # La réponse de CE tour (answer_event) d'abord : après un follow-up, result.answer
+        # pourrait encore être celle de la phase 1.
+        final = answer if answer is not None else result.answer
         if final is None:
             return ""
         return final if isinstance(final, str) else json.dumps(final, ensure_ascii=False, default=str)
@@ -256,6 +339,9 @@ class DemarcheRunner:
             await self._session.pause()
 
     async def resume(self) -> None:
+        # Pas de message « regarde à nouveau » : Holo prend une capture à chaque action, il voit
+        # donc la page telle que la personne l'a laissée. (Un message envoyé pendant que l'agent
+        # travaille ouvrirait un tour en plus après sa réponse et fausserait la phase 2.)
         if self._session is not None:
             await self._session.resume()
 

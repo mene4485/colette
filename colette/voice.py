@@ -7,8 +7,13 @@ Pipeline :
 - MicGate : envoie du silence à la place du micro quand la bulle est fermée, et pendant que
   Colette parle (anti-écho : LocalAudioTransport n'a pas d'AEC). `COLETTE_BARGE_IN=1` (casque)
   laisse le micro ouvert pendant que Colette parle.
-- VoiceGate : si l'agent H attend une réponse (`ask_user`), la prochaine transcription finale
-  résout la question et n'atteint pas le LLM.
+- VoiceGate : route chaque transcription finale AVANT le LLM (colette/intents.py) :
+  carte OUI/NON affichée → oui / non (sinon « Dites simplement oui ou non. ») ;
+  démarche en cours → stop / pause / reprise, par le même chemin que les boutons de la bulle ;
+  question H en attente (`ask_user`) → la réponse résout la question (bruit et « euh » ignorés,
+  une relance). Une commande reconnue n'atteint jamais le LLM.
+- Confirmation garantie par le code : H s'arrête au récapitulatif (ligne `CONFIRMATION: …`),
+  Colette pose la question, et seul un « oui » (voix ou bouton) déclenche `runner.follow_up()`.
 - StateTap : statut parle/écoute et sous-titres (mots Cartesia) poussés dans la bulle.
 - Tool async `run_demarche(objectif)` : lance le DemarcheRunner (vrai H ou faux), narre les étapes
   directement en TTSSpeakFrame (pas via le LLM : Holo met 3–6 s par action), puis rend le résultat
@@ -32,6 +37,7 @@ from pipecat.adapters.llm.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
+    FunctionCallResultProperties,
     BotStoppedSpeakingFrame,
     Frame,
     InputAudioRawFrame,
@@ -59,15 +65,18 @@ from pipecat.turns.user_mute import AlwaysUserMuteStrategy
 from pipecat.workers.runner import WorkerRunner
 
 from colette.audio_local import LocalAudioTransport, LocalAudioTransportParams
-from colette.h_agent import Step
+from colette.h_agent import Step, split_confirmation
+from colette.intents import is_noise, parse_intent
 from colette.narration import Narrator
-from colette.prompts import GREETING, H_GOAL_TEMPLATE, SYSTEM_PROMPT
+from colette.prompts import CONFIRMED_FOLLOW_UP, GREETING, H_GOAL_TEMPLATE, SYSTEM_PROMPT
 from colette.state import StateServer
 
 DEFAULT_LLM_MODEL = "google/gemini-2.5-flash"
 NARRATE_MIN_GAP_S = 5.0  # au plus une phrase de narration toutes les 5 s
 ECHO_TAIL_S = 0.4  # micro encore coupé juste après que Colette s'est tue
 ASK_TIMEOUT_S = 180.0
+CONFIRM_TIMEOUT_S = 120.0  # sans réponse → on ne valide pas
+REMIND_GAP_S = 4.0  # « Dites simplement oui ou non. » au plus toutes les 4 s
 
 _URL_RE = re.compile(r"https?://\S+")
 
@@ -93,19 +102,25 @@ class MicGate(FrameProcessor):
 
 
 class VoiceGate(FrameProcessor):
-    """Après le STT : route la réponse orale vers une question H en attente plutôt que vers le LLM."""
+    """Après le STT : commandes vocales et réponses aux questions H, avant le LLM."""
 
     def __init__(self, voice: "ColetteVoice") -> None:
         super().__init__(name="VoiceGate")
         self.voice = voice
         self._pending: Optional[asyncio.Future[str]] = None
+        self._question = ""
+        self._relanced = False
+        self._last_remind = 0.0
+        self._tasks: set[asyncio.Task] = set()
 
     @property
     def pending(self) -> bool:
         return self._pending is not None and not self._pending.done()
 
-    def expect_answer(self) -> asyncio.Future[str]:
+    def expect_answer(self, question: str = "") -> asyncio.Future[str]:
         self.cancel_pending()
+        self._question = question
+        self._relanced = False
         self._pending = asyncio.get_running_loop().create_future()
         return self._pending
 
@@ -121,6 +136,65 @@ class VoiceGate(FrameProcessor):
         if fut is not None and not fut.done():
             fut.cancel()
 
+    def _capturing(self) -> bool:
+        """Vrai quand la voix ne doit pas ouvrir de tour de parole pour le LLM."""
+        return self.pending or self.voice.state.confirm_pending
+
+    def _dispatch(self, msg: dict) -> None:
+        """Même chemin que les boutons de la bulle (StateServer.handle_message → callbacks)."""
+        task = asyncio.create_task(self.voice.state.handle_message({**msg, "source": "voix"}))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def _say_later(self, text: str) -> None:
+        task = asyncio.create_task(self.voice.say(text))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def context(self) -> str:
+        if self.voice.state.confirm_pending:
+            return "confirm"
+        if self.voice.working:
+            return "paused" if self.voice.paused else "working"
+        return "idle"
+
+    def route(self, text: str) -> bool:
+        """Traite une transcription finale. Renvoie True si elle ne doit PAS aller au LLM."""
+        ctx = self.context()
+        intent = parse_intent(text, ctx)
+        if ctx == "confirm":
+            if intent in ("yes", "no"):
+                logger.info("🎯 Intention « {} » → carte de confirmation", intent)
+                self._dispatch({"type": "confirm", "value": intent == "yes"})
+            elif intent == "stop":
+                logger.info("🎯 Intention « stop »")
+                self._dispatch({"type": "stop"})
+            elif is_noise(text):
+                logger.info("🔇 Ignoré (bruit) : {!r}", text)
+            elif time.monotonic() - self._last_remind > REMIND_GAP_S:
+                self._last_remind = time.monotonic()
+                logger.info("🎯 Pas de oui/non clair → rappel")
+                self._say_later("Dites simplement oui ou non.")
+            return True
+        if intent in ("stop", "pause", "resume") and self.voice.working:
+            logger.info("🎯 Intention « {} »", intent)
+            self._dispatch({"type": intent})
+            return True
+        if is_noise(text):  # bruit, « euh », « Merci. » fantôme sur l'écho : jamais au LLM
+            if self.pending:
+                logger.info("🔇 Ignoré (bruit) pendant la question H : {!r}", text)
+                if not self._relanced:
+                    self._relanced = True
+                    self._say_later(f"Je n'ai pas bien entendu. {self._question}".strip())
+            else:
+                logger.info("🔇 Ignoré (bruit) : {!r}", text)
+            return True
+        if self.pending:
+            logger.info("↳ réponse à la question de l'agent H")
+            self.resolve(text)
+            return True
+        return False
+
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if direction == FrameDirection.DOWNSTREAM:
@@ -129,16 +203,15 @@ class VoiceGate(FrameProcessor):
                 if text:
                     logger.info("🗣️  Utilisateur : {}", text)
                     self.voice.on_user_final(text)
-                if self.pending:
-                    if text:
-                        logger.info("↳ réponse à la question de l'agent H")
-                        self.resolve(text)
+                    if self.route(text):
+                        return
+                elif self._capturing():
                     return
-            elif isinstance(frame, InterimTranscriptionFrame) and self.pending:
+            elif isinstance(frame, InterimTranscriptionFrame) and self._capturing():
                 return
-            elif isinstance(frame, InputAudioRawFrame) and self.pending:
-                # Pas de VAD côté agrégateur pendant une question H : la réponse ne doit pas
-                # ouvrir un tour de parole pour le LLM.
+            elif isinstance(frame, InputAudioRawFrame) and self._capturing():
+                # Pas de VAD côté agrégateur pendant une question H ou la carte OUI/NON :
+                # la réponse ne doit pas ouvrir un tour de parole pour le LLM.
                 frame = InputAudioRawFrame(
                     audio=bytes(len(frame.audio)), sample_rate=frame.sample_rate, num_channels=frame.num_channels
                 )
@@ -183,9 +256,15 @@ class ColetteVoice:
         self.bot_speaking = False
         self.last_bot_stop = 0.0
         self.working = False
+        self.paused = False
+        self._stopped = False
         self.greeted = False
         self._last_user_final_at: Optional[float] = None
         self._last_narration = 0.0
+        self._step_seq = 0  # narration « dernier gagnant »
+        self._narrated_seq = 0
+        self._latest_step: Optional[tuple[int, Step, float]] = None
+        self._narr_task: Optional[asyncio.Task] = None
         self._demarche_task: Optional[asyncio.Task] = None
         self._started = asyncio.Event()
         self._bot_started_evt = asyncio.Event()
@@ -252,7 +331,9 @@ class ColetteVoice:
             name="run_demarche",
             description=(
                 "Lance l'agent qui fait la démarche sur le site Free dans le navigateur de la personne. "
-                "À appeler une seule fois, quand la personne a confirmé ce qu'elle veut."
+                "À appeler UNE SEULE FOIS, quand la personne a confirmé ce qu'elle veut. Ne jamais "
+                "rappeler tant que le résultat n'est pas revenu. La confirmation avant de valider "
+                "est gérée par l'outil lui-même."
             ),
             properties={
                 "objectif": {
@@ -335,74 +416,171 @@ class ColetteVoice:
         self.state.set_subtitle(GREETING)
         await self.say(GREETING, to_context=True)
 
-    # ---- messages de la bulle ----------------------------------------------
+    # ---- messages de la bulle (et commandes vocales, même chemin) ------------
     async def on_client_message(self, msg: dict) -> None:
         t = msg.get("type")
+        running = self._demarche_task is not None and not self._demarche_task.done()
         if t == "open":
             if self._started.is_set():
                 await self.greet()
         elif t == "stop":
             self.gate.cancel_pending()
-            if self._demarche_task and not self._demarche_task.done():
-                await self.runner.cancel()
+            if running and not self._stopped:
+                self._stopped = True
+                self.paused = False
                 await self.say("D'accord, j'arrête tout.")
+                try:
+                    await self.runner.cancel()
+                except Exception as e:
+                    logger.warning("Annulation H : {}", e)
         elif t == "pause":
-            if self.working:
-                await self.runner.pause()
+            if running and not self.paused and not self._stopped:
+                self.paused = True
+                await self.say("D'accord, je vous laisse la main. Dites « continuez » quand vous voulez.")
+                try:
+                    await self.runner.pause()
+                except Exception as e:
+                    logger.warning("Pause H : {}", e)
         elif t == "resume":
-            if self.working:
-                await self.runner.resume()
+            if running and self.paused and not self._stopped:
+                self.paused = False
+                await self.say("Je reprends.")
+                try:
+                    await self.runner.resume()
+                except Exception as e:
+                    logger.warning("Reprise H : {}", e)
+                if self.state.state.status == "paused":
+                    self.state.set_status("working")
 
     # ---- tool run_demarche -------------------------------------------------
     async def _run_demarche(self, params: FunctionCallParams) -> None:
         objectif = (params.arguments.get("objectif") or "").strip()
         logger.info("🛠️  run_demarche({!r})", objectif)
         if self._demarche_task and not self._demarche_task.done():
-            await params.result_callback({"statut": "refusé", "raison": "une démarche est déjà en cours"})
+            logger.warning("🛠️  run_demarche refusé : une démarche est déjà en cours")
+            await params.result_callback(
+                {"statut": "refusé", "raison": "Une démarche est déjà en cours, n'appelle plus l'outil. "
+                 "Dis seulement à la personne, en une phrase, que tu t'en occupes déjà."},
+            )
             return
         self._demarche_task = asyncio.current_task()
         self.working = True
+        self.paused = False
+        self._stopped = False
         self.state.update(steps=[], status="working", open=True)
         self.state.add_step("Comprendre votre demande")
         result: dict
+        speak = True  # le LLM résume-t-il ? (non : on a déjà tout dit nous-mêmes)
         try:
             goal = H_GOAL_TEMPLATE.format(objectif=objectif or "changer de forfait Free Mobile")
             answer = await self.runner.run(goal, on_step=self._on_step, ask_user=self._ask_user)
-            self.state.finish_steps()
-            result = {"statut": "terminé", "resultat": answer or "(l'agent n'a rien répondu)"}
+            body, action = split_confirmation(answer)
+            logger.info("🛠️  Phase 1 terminée ; confirmation demandée : {!r}", action)
+            if self._stopped:
+                result, speak = {"statut": "arrêtée par la personne"}, False
+            elif action is None:
+                self.state.finish_steps()
+                result = {"statut": "terminé", "resultat": body or "(l'agent n'a rien répondu)"}
+            elif await self._confirm(action):
+                self.state.add_step("Valider, avec votre accord")
+                answer2 = await self.runner.follow_up(CONFIRMED_FOLLOW_UP)
+                if self._stopped:
+                    result, speak = {"statut": "arrêtée par la personne pendant la validation"}, False
+                else:
+                    self.state.finish_steps()
+                    result = {"statut": "validé avec l'accord oral de la personne",
+                              "resultat": answer2 or "(l'agent n'a rien répondu)"}
+            elif self._stopped:
+                result, speak = {"statut": "arrêtée par la personne"}, False
+            else:
+                result, speak = {"statut": "non validé : la personne a dit non, rien n'a été changé",
+                                 "resultat": body}, False
         except asyncio.CancelledError:
-            self.working = False
-            self.state.set_status("done")
             raise
         except Exception as e:
-            logger.exception("Démarche en échec")
-            result = {"statut": "échec ou annulée", "erreur": str(e)}
+            if self._stopped:
+                result, speak = {"statut": "arrêtée par la personne"}, False
+            else:
+                logger.exception("Démarche en échec")
+                result = {"statut": "échec", "erreur": str(e)}
         finally:
             self.working = False
+            self.paused = False
             self.gate.cancel_pending()
-        self.state.set_status("done")
+            self.state.resolve_confirm(False)
+            try:
+                await self.runner.close()
+            except Exception as e:
+                logger.warning("Fermeture de la session H : {}", e)
+            self.state.set_status("done")
+        result["suite"] = ("Cette démarche est terminée. Si la personne demande une nouvelle démarche, "
+                           "reformule puis rappelle run_demarche normalement.")
         logger.info("🛠️  run_demarche → {}", result)
-        await params.result_callback(result)
+        await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=speak))
 
-    async def _on_step(self, step: Step) -> None:
+    async def _confirm(self, action: str) -> bool:
+        """Carte OUI/NON + question orale. Seul un oui explicite (voix ou bouton) renvoie True."""
+        card = action[0].upper() + action[1:] + " ?"
+        question = f"Je m'apprête à {action}. Je valide ? Dites oui ou non."
+        logger.info("✋ Confirmation demandée : {}", action)
+        fut = self.state.ask_confirm(card)
+        await self.say(question)
+        try:
+            ok = bool(await asyncio.wait_for(fut, CONFIRM_TIMEOUT_S))
+        except asyncio.TimeoutError:
+            logger.info("✋ Pas de réponse à la confirmation → on ne valide pas")
+            self.state.resolve_confirm(False)
+            ok = False
+        logger.info("✋ Réponse : {}", "OUI" if ok else "NON")
+        if self._stopped:
+            return False
+        await self.say("Merci, je valide." if ok else "D'accord, je ne valide rien. Rien n'a été changé.")
+        return ok
+
+    def _on_step(self, step: Step) -> None:
+        """Rend la main tout de suite : la narration tourne à côté (« dernier gagnant »)."""
         if step.kind != "step":
             logger.debug("[{}] {}", step.kind, step.text)
             return
         logger.info("👣 [H] {}", step.text)
-        text = await self.narrator.simplify(step)
-        if not text:
-            return  # action technique, ou phrase déjà dite
-        text = _URL_RE.sub("la page", text).strip()
-        logger.info("💬 {}", text)
-        self.state.add_step(text[:80])
-        now = time.monotonic()
-        if now - self._last_narration >= NARRATE_MIN_GAP_S and not self.bot_speaking and not self.gate.pending:
-            self._last_narration = now
-            await self.say(text.rstrip(".") + ".")
+        self._step_seq += 1
+        self._latest_step = (self._step_seq, step, time.monotonic())
+        if self._narr_task is None or self._narr_task.done():
+            self._narr_task = asyncio.create_task(self._narrate_latest())
+
+    def _can_narrate(self) -> bool:
+        return (
+            self.working and not self.paused and not self._stopped
+            and not self.bot_speaking and not self.gate.pending and not self.state.confirm_pending
+            and time.monotonic() - self._last_narration >= NARRATE_MIN_GAP_S
+        )
+
+    async def _narrate_latest(self) -> None:
+        """Un seul appel au narrateur à la fois ; seule la dernière étape reçue peut être dite."""
+        try:
+            while self._latest_step and self._latest_step[0] > self._narrated_seq:
+                seq, step, received = self._latest_step
+                self._narrated_seq = seq
+                text = await self.narrator.simplify(step)
+                if not text:
+                    continue  # action technique, ou phrase déjà dite
+                text = _URL_RE.sub("la page", text).strip()
+                self.state.add_step(text[:80])
+                age = time.monotonic() - received
+                if seq != self._step_seq:
+                    logger.info("💬 (jetée : étape dépassée) {}", text)
+                elif self._can_narrate():
+                    self._last_narration = time.monotonic()
+                    logger.info("💬 {} (dite {:.1f} s après l'étape)", text, age)
+                    await self.say(text.rstrip(".") + ".")
+                else:
+                    logger.info("💬 (affichée, pas dite) {}", text)
+        except Exception:
+            logger.exception("Narration en échec")
 
     async def _ask_user(self, question: str) -> str:
         logger.info("❓ Agent H : {}", question)
-        fut = self.gate.expect_answer()
+        fut = self.gate.expect_answer(question)
         self.state.set_status("listening")
         self.state.set_subtitle(question)
         await self.say(question)
@@ -410,8 +588,8 @@ class ColetteVoice:
             answer = await asyncio.wait_for(fut, ASK_TIMEOUT_S)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             answer = "(pas de réponse)"
-        if self.working:
-            self.state.set_status("working")
+        if self.working and self.state.state.status == "listening":
+            self.state.set_status("paused" if self.paused else "working")
         logger.info("↳ réponse transmise à H : {}", answer)
         return answer
 
@@ -421,24 +599,43 @@ class ColetteVoice:
             await asyncio.sleep(0.2)
 
     async def _play_script(self) -> None:
-        """Lignes jouées comme si la personne parlait. « ? texte » = réponse à la prochaine question H."""
+        """Lignes jouées comme si la personne parlait (même routage que le micro).
+
+        « texte »   : dit quand Colette se tait (part au LLM, sauf commande reconnue).
+        « ?texte »  : attend une question H ou la carte OUI/NON, puis répond.
+        « !texte »  : commande dite tout de suite (stop, attendez, continuez…), même si Colette parle.
+        « @5 »      : attend 5 secondes.
+        """
         try:  # laisser passer l'accueil
             await asyncio.wait_for(self._bot_started_evt.wait(), 15)
         except asyncio.TimeoutError:
             logger.warning("Accueil non entendu (TTS ?)")
         for line in self.script:
+            if line.startswith("@"):
+                await asyncio.sleep(float(line[1:] or 1))
+                continue
+            if line.startswith("!"):
+                line = line[1:].strip()
+                logger.info("📜 (commande) {}", line)
+                self.on_user_final(line)
+                if not self.gate.route(line):
+                    logger.warning("📜 « {} » non reconnue comme commande", line)
+                continue
             if line.startswith("?"):
                 line = line[1:].strip()
-                while not self.gate.pending:
+                while not (self.gate.pending or self.state.confirm_pending):
                     await asyncio.sleep(0.2)
+                await asyncio.sleep(1.5)  # laisser Colette commencer à poser la question
                 await self._wait_quiet()
                 logger.info("📜 (réponse) {}", line)
                 self.on_user_final(line)
-                self.gate.resolve(line)
+                self.gate.route(line)
                 continue
             await self._wait_quiet()
             logger.info("📜 {}", line)
             self.on_user_final(line)
+            if self.gate.route(line):
+                continue
             self._bot_started_evt.clear()
             await self.worker.queue_frame(
                 LLMMessagesAppendFrame(messages=[{"role": "user", "content": line}], run_llm=True)

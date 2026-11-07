@@ -133,6 +133,10 @@ class StateServer:
         self.state.steps.append({"label": label, "state": "doing"})
         self._broadcast()
 
+    @property
+    def confirm_pending(self) -> bool:
+        return self._confirm_future is not None and not self._confirm_future.done()
+
     def ask_confirm(self, text: str) -> asyncio.Future[bool]:
         """Affiche la carte OUI/NON ; la Future se résout au clic (ou via resolve_confirm)."""
         self.resolve_confirm(False)  # une seule question à la fois

@@ -5,7 +5,8 @@
 
 Cliquer sur la bulle dans le Chrome :9222 → Colette dit bonjour et écoute.
 Options : --auto (ouvre la bulle et parle sans clic), --say "phrase" (répétable : simule la
-personne sans micro ; « ?phrase » = réponse à la prochaine question de l'agent H).
+personne sans micro ; « ?phrase » = réponse à la prochaine question de l'agent H ou à la carte
+OUI/NON ; « !phrase » = commande dite tout de suite, ex. « !attendez » ; « @5 » = attendre 5 s).
 Variables : OPENROUTER_MODEL, COLETTE_BARGE_IN=1 (casque : on peut couper la parole à Colette).
 Ctrl+C pour quitter.
 """
@@ -86,6 +87,7 @@ async def main() -> None:
     logger.info("Arrêt…")
     try:
         await runner.cancel()
+        await runner.close()  # libère le slot du quota H
         await runner.aclose()
     except Exception as e:
         logger.warning("Arrêt de l'agent : {}", e)
