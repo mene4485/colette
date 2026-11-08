@@ -255,6 +255,10 @@ class StateServer:
             self.update(call=False, heard="", status="idle" if not self.state.busy else self.state.status)
         elif mtype == "reset":
             self.update(outcome=None, steps=[], title="", heard="")
+        elif mtype == "new_session":  # « New request » en local : tout repart de zéro
+            self.resolve_confirm(False)
+            self.update(outcome=None, steps=[], title="", heard="", subtitle="", transcript=[],
+                        guide=None, confirm=None, login_handoff=False)
         elif mtype == "confirm":
             self.resolve_confirm(bool(msg.get("value")))
         elif mtype == "pause":

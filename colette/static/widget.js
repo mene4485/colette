@@ -1239,6 +1239,11 @@
     if (hlBox) hlBox.style.display = "none";
     state = { open: true, status: "idle", steps: [], subtitle: "", confirm: null, call: true, transcript: [] };
     render();
+    if (hasBinding()) {  // local (CDP) : pas de WebSocket, le serveur remet tout à zéro et l'appel reprend
+      restartCall = false;
+      send({ type: "new_session" }); send({ type: "open" }); send({ type: "call" });
+      return;
+    }
     if (ws) { try { ws.close(); } catch (e) { /* ignore */ } } else connect();
   }
 

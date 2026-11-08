@@ -827,6 +827,18 @@ class ColetteVoice:
                 await self.state.handle_message({"type": "stop", "source": t})
         elif t == "reset":
             pass  # retour à l'écran d'accueil, micro coupé : rien à dire
+        elif t == "new_session":  # « New request » en local : démarche en cours arrêtée en silence
+            self.hung_up = False
+            self.gate.cancel_pending()
+            await self._hush()
+            if running and not self._stopped:
+                self._stopped = True
+                if self.guide is not None:
+                    self.guide.stop()
+                try:
+                    await self.runner.cancel()
+                except Exception as e:
+                    logger.warning("Annulation H (nouvelle demande) : {}", e)
         elif t == "replay":
             await self.say(self._outcome_speech())
         elif t == "advisor":
