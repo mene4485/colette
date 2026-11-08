@@ -392,6 +392,9 @@ class LLMTap(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+        if direction == FrameDirection.DOWNSTREAM and self.voice.hung_up \
+                and isinstance(frame, (LLMTextFrame, TTSSpeakFrame)):
+            return  # raccroché : réponse du LLM en vol ou phrase en file → jamais dite
         if direction == FrameDirection.DOWNSTREAM:
             if isinstance(frame, LLMFullResponseStartFrame):
                 self._parts = []
@@ -464,6 +467,7 @@ class ColetteVoice:
         self._announced_steps: set[int] = {0}  # étapes déjà annoncées « Maintenant, je vais… »
         self._login_said = False
         self._intro_said = False
+        self.hung_up = False  # « Raccrocher » : plus un mot, plus d'écoute, jusqu'au prochain appel
         self._confirmations: list[tuple[str, bool]] = []  # confirm_change de cette démarche (résumé, oui ?)
         self._correction = ""  # « non, je veux l'autre » : renvoyé à H comme consigne, pas comme refus
         self.session_url = ""  # mode en ligne : session de la personne (claim) sur sa page actuelle
@@ -488,7 +492,7 @@ class ColetteVoice:
     # ---- état partagé entre processeurs ------------------------------------
     def mic_open(self) -> bool:
         st = self.state.state
-        if not (st.call or st.busy):
+        if self.hung_up or not (st.call or st.busy):
             return False
         if st.status == "paused" or (self._stopped and self.working):
             return False  # Pause ou Arrêter : Colette n'enregistre plus rien
@@ -515,7 +519,7 @@ class ColetteVoice:
         courtes « arrêtez / taisez-vous / quittez l'appel » sont écoutées (pas d'AEC : l'écho de sa
         propre voix est filtré dans VoiceGate)."""
         st = self.state.state
-        if not (st.call or st.busy) or st.status == "paused" or (self._stopped and self.working):
+        if self.hung_up or not (st.call or st.busy) or st.status == "paused" or (self._stopped and self.working):
             return False
         return self.bot_speaking or time.monotonic() - self.last_bot_stop <= self.echo_tail
 
@@ -668,6 +672,9 @@ class ColetteVoice:
 
     # ---- parole ------------------------------------------------------------
     async def say(self, text: str, *, to_context: bool = False) -> None:
+        if self.hung_up:
+            logger.info("🔕 (raccroché, pas dit) {}", text)
+            return
         self.state.add_line("colette", text)
         if self.worker is not None:
             await self.worker.queue_frame(TTSSpeakFrame(text, append_to_context=to_context))
@@ -729,6 +736,8 @@ class ColetteVoice:
                            "on the left, then click \"Log in\".")
             return
         running = self._demarche_task is not None and not self._demarche_task.done()
+        if t in ("call", "shortcut", "retry"):
+            self.hung_up = False
         if t == "call":
             if not self._started.is_set():
                 try:
@@ -750,6 +759,8 @@ class ColetteVoice:
                 logger.info("🔘 Raccourci {} → {!r}", msg.get("id"), request)
                 await self._ask_llm(request)
         elif t in ("hangup", "later"):  # « close » (Fermer, changement de page) n'arrête rien
+            self.hung_up = True  # avant tout : plus rien n'est dit ni écouté
+            self.gate.cancel_pending()
             await self._hush()  # raccrocher = silence immédiat
             if running and not self._stopped:
                 await self.state.handle_message({"type": "stop", "source": t})
@@ -799,6 +810,13 @@ class ColetteVoice:
     async def _run_demarche(self, params: FunctionCallParams) -> None:
         objectif = (params.arguments.get("objectif") or "").strip()
         logger.info("🛠️  run_demarche({!r})", objectif)
+        if self.hung_up:  # appel du LLM arrivé après « Raccrocher » : on ne lance rien
+            logger.warning("🛠️  run_demarche refusé : la personne a raccroché")
+            await params.result_callback(
+                {"statut": "refused", "raison": "The person hung up. Do nothing and say nothing."},
+                properties=FunctionCallResultProperties(run_llm=False),
+            )
+            return
         if self._demarche_task and not self._demarche_task.done():
             logger.warning("🛠️  run_demarche refusé : une démarche est déjà en cours")
             await params.result_callback(

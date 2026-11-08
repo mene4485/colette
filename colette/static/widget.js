@@ -21,7 +21,7 @@
   var HOSTED = !!BACKEND;
   if (HOSTED) WS_URL = BACKEND.replace(/^http/, "ws") + "/ws";
   var IN_RATE = 16000, OUT_RATE = 24000;
-  var audioCtx = null, micStream = null, micNode = null, playAt = 0, playing = [];
+  var audioCtx = null, micStream = null, micNode = null, playAt = 0, playing = [], micWanted = false;
   var outNode = null, outEl = null;
   var shot = null, liveEl = null, busyServer = false;
   var PANEL_W = 440;  // largeur du panneau ; la page est rétrécie d'autant (rien n'est caché)
@@ -235,6 +235,7 @@
   function hasBinding() { return typeof window.__coletteSend === "function"; }
 
   function send(msg) {
+    if (HOSTED && /^(hangup|later)$/.test(msg.type)) stopAudio();  // raccrocher : micro rendu, son coupé
     if (HOSTED && /^(open|call|shortcut|resume)$/.test(msg.type)) startAudio();  // geste de la personne
     if (HOSTED && /^(open|call|shortcut|text)$/.test(msg.type)) setTimeout(shareSession, 0);
     if (hasBinding()) window.__coletteSend(JSON.stringify(msg));
@@ -243,6 +244,7 @@
 
   // ---- audio (mode en ligne) ----
   function startAudio() {
+    micWanted = true;
     try {
       if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -255,6 +257,7 @@
     micStream = "pending";
     navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
       .then(function (stream) {
+        if (!micWanted) { stream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; return; }
         micStream = stream;
         var src = audioCtx.createMediaStreamSource(stream);
         micNode = audioCtx.createScriptProcessor(4096, 1, 1);
@@ -330,6 +333,16 @@
     playAt += b.duration;
     playing.push(src);
     src.onended = function () { var k = playing.indexOf(src); if (k >= 0) playing.splice(k, 1); };
+  }
+
+  function stopAudio() {
+    micWanted = false;
+    flushAudio();
+    if (micStream && micStream !== "pending") {
+      try { micStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* ignore */ }
+    }
+    if (micNode) { try { micNode.disconnect(); } catch (e) { /* ignore */ } micNode.onaudioprocess = null; }
+    micStream = null; micNode = null;
   }
 
   function flushAudio() {
