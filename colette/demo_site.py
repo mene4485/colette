@@ -231,6 +231,8 @@ footer{text-align:center;color:#999;font-size:12px;padding:20px}
 
 # Logo Free Mobile (Wikimedia Commons, « Logo_Free_Mobile.svg »), recoloré en blanc pour le bandeau rouge.
 FREE_LOGO = (Path(__file__).resolve().parent / "free_logo.svg").read_text(encoding="utf-8").strip()
+FAVICON = "data:image/svg+xml," + quote(
+    (Path(__file__).resolve().parent / "free_favicon.svg").read_text(encoding="utf-8").strip(), safe="")
 
 COOKIE_BANNER = """
 <div id="cookies"><p><b>Your cookie choices.</b> We use cookies to improve your
@@ -261,7 +263,7 @@ def page(title: str, body: str, account: Optional[dict] = None, active: str = ""
         ) + "</nav>"
     content = f'<div class="wrap">{side}<main>{body}</main></div>' if account else body
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} - Free Mobile (mock-up)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} - Free Mobile (mock-up)</title><link rel="icon" href="{FAVICON}">
 <style>{CSS}</style></head><body>
 <div class="demo">Demo mock-up for Colette · not affiliated with Free · fictitious account</div>
 <header><span class="logo">{FREE_LOGO}</span><span class="space">Customer Area</span>{user}</header>

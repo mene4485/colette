@@ -7,6 +7,7 @@
 !colette/__init__.py
 !colette/demo_site.py
 !colette/free_logo.svg
+!colette/free_favicon.svg
 !colette/static
 !colette/static/widget.js
 !vercel.json
