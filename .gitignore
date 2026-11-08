@@ -7,3 +7,4 @@ __pycache__/
 logs/
 demo_data/
 .vercel
+.pytest_cache/
