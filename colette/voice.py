@@ -92,8 +92,8 @@ ADVISOR_TEXT = ("You can call Free Mobile customer service on three, two, four, 
 _URL_RE = re.compile(r"https?://\S+")
 # Narration sur la connexion : dite une seule fois par démarche (« I'm logging in » ×2 sinon).
 _LOGIN_RE = re.compile(r"\b(log(ging)?\s*(you\s+)?in|login|sign(ing)?\s*in|connect|password|identifier|credentials)\b", re.I)
-INTRO = ("Don't worry, I'm here with you and I'll take the lead. "
-         "I'll guide you through each step, and you can say stop at any time.")
+INTRO = "Don't worry, I'm with you and I'll take the lead. You can say stop at any time."
+NARRATION_MAX_AGE_S = 4.0  # une phrase sur une action plus vieille que ça est périmée : jetée
 
 
 def _lower_first(text: str) -> str:
@@ -870,6 +870,9 @@ class ColetteVoice:
                 logger.info("📋 Plan du skill {} : {}", skill, labels)
                 await self._announce_plan(labels)
                 self._fixed_plan = True
+                # H ne démarre qu'une fois le plan dit : sinon il a fini (et demande l'accord) avant que
+                # Colette ait fini de lire ce qu'elle va faire, et tout ce qu'elle dit ensuite est en retard.
+                await self._wait_spoken(timeout=25.0)
                 numbered = "\n".join(f"{i}. {l}" for i, l in enumerate(labels, start=1))
                 goal += (f"\nSteps ALREADY announced to the person (skill {skill}) — do not call annoncer_etapes, "
                          f"call etape_terminee(numero) with these numbers at the end of each step:\n{numbered}\n")
@@ -973,6 +976,23 @@ class ColetteVoice:
         self._last_narration = time.monotonic() + 3.0  # pas de narration par-dessus le plan
         await self.say(text)
 
+    async def _wait_spoken(self, timeout: float = 25.0) -> None:
+        """Attend que Colette ait commencé PUIS fini de dire ce qui est en file (plan…)."""
+        loop = asyncio.get_running_loop()
+        end, start_by = loop.time() + timeout, loop.time() + 6.0
+        t0 = time.monotonic()
+        while not self.bot_speaking and self.last_bot_stop < t0:  # la parole n'a pas encore commencé
+            if loop.time() > start_by or self._stopped or self.hung_up:
+                return
+            await asyncio.sleep(0.1)
+        while loop.time() < end and not (self._stopped or self.hung_up):
+            if self.bot_speaking:
+                await asyncio.sleep(0.1)
+                continue
+            await asyncio.sleep(0.4)  # petite pause entre deux phrases : pas encore fini
+            if not self.bot_speaking:
+                return
+
     def _on_step_done(self, number: int) -> None:
         if not self._plan_announced:
             return
@@ -995,6 +1015,14 @@ class ColetteVoice:
             return
         for i in range(number):
             self._announced_steps.add(i)
+        for _ in range(15):  # Colette parle encore : au plus 1,5 s d'attente, sinon l'annonce est périmée
+            if not self.bot_speaking or self._announce_target != number:
+                break
+            await asyncio.sleep(0.1)
+        if self.bot_speaking or self._announce_target != number or self.state.confirm_pending:
+            logger.info("💬 (annonce jetée : Colette parlait encore) étape {}", number + 1)
+            self._announced_steps.add(number)
+            return
         self._spawn_say(self._step_announcement(number))
 
     def _step_announcement(self, idx: int) -> str:
@@ -1125,6 +1153,9 @@ class ColetteVoice:
         question = f"I'm about to {_lower_first(action)}.{money} Shall I confirm? Say yes or no."
         logger.info("✋ Confirmation demandée : {}", action)
         fut = self.state.ask_confirm(card, **_confirm_card(action, costs_money))
+        if self.bot_speaking:  # narration en retard : coupée, la question passe tout de suite
+            await self._hush()
+            await asyncio.sleep(0.3)
         await self.say(question)
         try:
             ok = bool(await asyncio.wait_for(fut, CONFIRM_TIMEOUT_S))
@@ -1179,6 +1210,8 @@ class ColetteVoice:
                 age = time.monotonic() - received
                 if seq != self._step_seq:
                     logger.info("💬 (jetée : étape dépassée) {}", text)
+                elif age > NARRATION_MAX_AGE_S:
+                    logger.info("💬 (jetée : trop tard, {:.1f} s) {}", age, text)
                 elif self._can_narrate():
                     self._last_narration = time.monotonic()
                     logger.info("💬 {} (dite {:.1f} s après l'étape)", text, age)
