@@ -91,6 +91,9 @@ ADVISOR_TEXT = ("You can call Free Mobile customer service on three, two, four, 
                 "from your Free phone. I'm still here if you need me.")
 
 _URL_RE = re.compile(r"https?://\S+")
+_LOGOUT_RE = re.compile(r"\blog ?out\b|\bsign ?out\b|se d[ée]connecter|d[ée]connexion", re.I)
+_LOGIN_STEP_RE = re.compile(r"\blog ?in\b|\bsign ?in\b|connect", re.I)
+ALREADY_IN = "Oh, you're already logged in!"
 BUSY_TEXT = "I'm helping other people right now. Please try again in a minute."
 _QUOTA_RE = re.compile(r"quota|rate.?limit|too many|429|concurren", re.I)
 # Narration sur la connexion : dite une seule fois par démarche (« I'm logging in » ×2 sinon).
@@ -972,15 +975,25 @@ class ColetteVoice:
             plan = match_plan(objectif)
             if is_view_request(objectif):
                 goal += ("\nThe person only wants to CHECK some information: change nothing, do not "
-                         "click any \"Edit\", \"Save\" or \"Confirm\" button. Find the information, read "
-                         "it and give it in your final answer.\n")
+                         "click any \"Edit\", \"Save\" or \"Confirm\" button, do not download or open a file. "
+                         "Find the information, read it and give it in your final answer.\n")
+            # Déjà connectée sur sa page ? Pas d'étape « Log in » et Colette le dit.
+            logged = bool(fresh) or await self._already_logged_in()
+            if logged:
+                self._login_said = True
+                logger.info("🔑 Déjà connectée : pas d'étape de connexion")
+                if not fresh:
+                    goal += ("\nThe person is ALREADY logged in on this website: do not log in again, "
+                             "go straight to the task.\n")
             if not plan:  # pas de plan connu d'avance : on rassure quand même tout de suite
                 self._intro_said = True
-                self._spawn_say(INTRO)
+                self._spawn_say(INTRO + (" " + ALREADY_IN if logged else ""))
             if plan:  # toutes les étapes connues dès le début, affichées et lues une fois
                 skill, labels = plan
+                if logged:
+                    labels = [l for l in labels if not _LOGIN_STEP_RE.search(l)] or labels
                 logger.info("📋 Plan du skill {} : {}", skill, labels)
-                await self._announce_plan(labels)
+                await self._announce_plan(labels, prefix=ALREADY_IN if logged else "")
                 self._fixed_plan = True
                 # H ne démarre qu'une fois le plan dit : sinon il a fini (et demande l'accord) avant que
                 # Colette ait fini de lire ce qu'elle va faire, et tout ce qu'elle dit ensuite est en retard.
@@ -1170,7 +1183,20 @@ class ColetteVoice:
             return
         await self._announce_plan(labels)
 
-    async def _announce_plan(self, labels: list[str]) -> None:
+    async def _already_logged_in(self) -> bool:
+        """La page de la personne montre-t-elle déjà « Log out » / « Se déconnecter » ? (lue par la bulle)"""
+        if not self.state.can_scan:
+            return False
+        try:
+            page = await asyncio.wait_for(self.state.scan_page(), 3.0)
+        except Exception:
+            return False
+        if not page:
+            return False
+        texts = [e.get("text") or "" for e in page.get("elements") or []] + [page.get("text") or ""]
+        return any(_LOGOUT_RE.search(t) for t in texts)
+
+    async def _announce_plan(self, labels: list[str], prefix: str = "") -> None:
         labels = [l.rstrip(" .") for l in labels]
         if labels and ("accord" in labels[-1].lower() or "approval" in labels[-1].lower()) and labels[-1] != VALIDATE_STEP:
             labels[-1] = VALIDATE_STEP  # libellé imposé pour la dernière étape
@@ -1184,6 +1210,8 @@ class ColetteVoice:
         text = f"Here is what we'll do together: {spoken}."
         if validate:
             text += " And I will ask for your approval before confirming anything."
+        if prefix:
+            text = f"{prefix} {text}"
         if not self._intro_said:
             self._intro_said = True
             text = f"{INTRO} {text}"
