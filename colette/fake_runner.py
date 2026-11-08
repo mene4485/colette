@@ -56,6 +56,10 @@ class FakeDemarcheRunner:
         self._choice = "the two euro plan"
         self.validated = False  # vrai seulement si follow_up() a « cliqué » sur Valider
 
+    async def h_available(self) -> Optional[int]:
+        """COLETTE_FAKE_BUSY=1 : simule un quota H plein (test du message « je reviens dans une minute »)."""
+        return 0 if os.getenv("COLETTE_FAKE_BUSY") == "1" else 3
+
     async def _sleep(self, seconds: float) -> None:
         await asyncio.sleep(seconds / self.speed)
         await self._resumed.wait()

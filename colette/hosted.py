@@ -106,6 +106,30 @@ class HostedState(StateServer):
             except Exception:
                 logger.exception("Listener d'état en échec")
 
+    # ---- guide pas à pas : la bulle lit la page de la personne et renvoie le résultat ----
+    @property
+    def can_scan(self) -> bool:
+        return True
+
+    async def scan_page(self) -> Optional[dict]:
+        self._scan_seq = getattr(self, "_scan_seq", 0) + 1
+        sid = self._scan_seq
+        fut = asyncio.get_running_loop().create_future()
+        self._scans = getattr(self, "_scans", {})
+        self._scans[sid] = fut
+        self._queue.put_nowait(json.dumps({"type": "scan", "id": sid}))
+        try:
+            return await asyncio.wait_for(fut, 5.0)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self._scans.pop(sid, None)
+
+    def _on_scan_result(self, msg: dict) -> None:
+        fut = getattr(self, "_scans", {}).get(msg.get("id"))
+        if fut is not None and not fut.done():
+            fut.set_result(msg.get("page"))
+
     def push_screen(self, shot: dict) -> None:
         """Capture de l'agent H (PNG) → JPEG réduit → bulle."""
         image, media = shot["image"], shot.get("media_type", "image/png")

@@ -27,7 +27,7 @@ def test_parse_invalid():
 
 def test_format_elements():
     out = format_elements([{"id": "c1", "tag": "input", "type": "password", "text": "", "inView": False}])
-    assert out == "c1 | input[password] | (sans libellé) | non"
+    assert out == "c1 | input[password] | (no label) | no"
 
 
 if __name__ == "__main__":

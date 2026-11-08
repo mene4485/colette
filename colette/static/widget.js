@@ -208,7 +208,20 @@
     "@media (max-height:820px){.head{padding:12px 20px}.head .av{width:52px;height:52px}.body{padding:18px 22px}",
     ".talk{margin-top:16px}.talk .halo{width:150px;height:150px}.talk .disc{width:118px;height:118px}.talk b{margin-top:12px;font-size:23px}",
     ".sep{margin:16px 0 12px}.grid{margin-top:12px}.chip{padding:13px 8px}.steps{gap:12px;margin-top:14px}.count{margin-top:14px}",
-    ".badge.ok{width:76px;height:76px;margin-bottom:16px}.big1{font-size:32px}.foot{padding:14px 22px 16px}.btn{padding:15px 12px}}"
+    ".badge.ok{width:76px;height:76px;margin-bottom:16px}.big1{font-size:32px}.foot{padding:14px 22px 16px}.btn{padding:15px 12px}}",
+    /* guide pas à pas : anneau autour de l'élément à cliquer + petite fenêtre de consigne */
+    ".glayer{position:fixed;inset:0;z-index:2147483645;pointer-events:none}.glayer.hidden{display:none}",
+    ".ring{position:fixed;border:4px solid " + BLUE + ";border-radius:12px;pointer-events:none;",
+    "box-shadow:0 0 0 9999px rgba(15,23,42,.25);animation:gring 1.2s ease-in-out infinite}",
+    ".ring.warn{border-color:#E65100}",
+    "@keyframes gring{0%,100%{outline:0 solid rgba(33,85,211,.5)}50%{outline:8px solid rgba(33,85,211,0)}}",
+    ".tip{position:fixed;width:320px;background:#fff;color:" + INK + ";border:3px solid " + BLUE + ";border-radius:16px;",
+    "padding:12px 14px;box-shadow:0 12px 32px rgba(15,23,42,.3);pointer-events:auto;font:16px/1.4 system-ui,sans-serif}",
+    ".tip.warn{border-color:#E65100;background:#FFF3E0}",
+    ".tip .n{font-size:14px;font-weight:700;color:" + BLUE + ";margin-bottom:4px}.tip.warn .n{color:#E65100}",
+    ".tip .t{font-size:19px;line-height:1.35;font-weight:600;margin-bottom:10px}",
+    ".tip button{font-size:16px;font-weight:700;padding:8px 14px;border-radius:10px;border:2px solid " + BLUE + ";",
+    "background:" + BLUE + ";color:#fff;cursor:pointer}"
   ].join("");
 
   // ---- icônes (SVG en ligne) ----
@@ -437,6 +450,7 @@
       if (!/text\/html/.test(ct)) { location.href = url; return; }  // fichier, autre : vrai chargement
       return r.text().then(function (t) {
         swapPage(t, r.url, push);
+        if (state.guide) send({ type: "page_loaded" });  // guide pas à pas : nouvelle page à relire
         if (push) window.scrollTo(0, 0);
       });
     }).catch(function () { location.href = url; });
@@ -582,7 +596,8 @@
   // ---- écran de l'agent (mode en ligne) : captures du navigateur cloud de H ----
   function renderLive() {
     if (!HOSTED || !root) return;
-    var show = !!shot && state.open && (state.busy || !!state.confirm) && !state.login_handoff;
+    var show = !!shot && state.open && (state.busy || !!state.confirm) && !state.login_handoff &&
+      state.status !== "guiding" && !state.guide;
     if (!liveEl) {
       liveEl = el("div", "live");
       var bar = el("div", "livebar");
@@ -673,6 +688,137 @@
     return "";
   }
 
+  // ---- guide pas à pas : lecture de la page, anneau + consigne, détection du clic ----
+  var PAGE_ID = Math.random().toString(36).slice(2, 10), nextCid = 1;
+  var SCAN_SEL = "a[href],button,input:not([type=hidden]),select,textarea,summary,[onclick]," +
+    "[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=radio],[role=option],[role=switch]";
+  var BUTTON_INPUTS = /^(button|submit|reset|checkbox|radio|image|file)$/;
+
+  function gVisible(e) {
+    var r = e.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    var cs = getComputedStyle(e);
+    return cs.visibility !== "hidden" && cs.display !== "none" && parseFloat(cs.opacity || "1") > 0.05;
+  }
+  function gClean(t) { return ((t || "") + "").replace(/\s+/g, " ").trim().slice(0, 90); }
+  // Libellé lisible — JAMAIS la valeur tapée dans un champ (mot de passe, identifiant…).
+  function labelOf(e) {
+    var tag = e.tagName, t = e.getAttribute("aria-label") || "";
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+      if (tag === "INPUT" && /^(button|submit|reset)$/.test(e.type)) t = t || e.value;
+      if (!t && e.id) {
+        var esc = window.CSS && window.CSS.escape ? window.CSS.escape(e.id) : e.id;
+        var l = document.querySelector('label[for="' + esc + '"]');
+        if (l) t = l.innerText;
+      }
+      if (!t && e.closest("label")) t = e.closest("label").innerText;
+      t = t || e.placeholder || e.name || e.title || "";
+      if (tag === "SELECT" && e.selectedIndex >= 0 && e.options[e.selectedIndex]) {
+        t += " (selected: " + e.options[e.selectedIndex].text + ")";
+      }
+      return gClean(t);
+    }
+    t = t || e.innerText || e.title || "";
+    if (!gClean(t)) { var img = e.querySelector("img[alt]"); if (img) t = img.alt; }
+    return gClean(t);
+  }
+  window.__colette.scan = function () {
+    var nodes = document.querySelectorAll(SCAN_SEL), out = [];
+    for (var i = 0; i < nodes.length && out.length < 200; i++) {
+      var e = nodes[i];
+      if (!gVisible(e) || e.closest("[aria-hidden=true]") || e.disabled) continue;
+      var text = labelOf(e), field = /^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName);
+      if (!text && !field) continue;
+      var cid = e.getAttribute("data-colette-id");
+      if (!cid) { cid = "c" + (nextCid++); e.setAttribute("data-colette-id", cid); }
+      var r = e.getBoundingClientRect();
+      out.push({ id: cid, tag: e.tagName.toLowerCase(), type: e.getAttribute("role") || (field ? e.type || "" : ""),
+                 text: text, inView: r.bottom > 0 && r.top < window.innerHeight });
+    }
+    var heads = [], hs = document.querySelectorAll("h1,h2,h3");
+    for (var j = 0; j < hs.length && heads.length < 10; j++) {
+      if (gVisible(hs[j]) && gClean(hs[j].innerText)) heads.push(gClean(hs[j].innerText));
+    }
+    return { pageId: PAGE_ID, url: location.href, title: document.title, headings: heads,
+             text: ((document.body && document.body.innerText) || "").replace(/\s+/g, " ").slice(0, 2500),
+             elements: out };
+  };
+
+  var guideRaf = null, shownStep = null;
+  function guideHere() { var g = state.guide; return g && g.page === PAGE_ID ? g : null; }
+  function guideTarget() {
+    var g = guideHere();
+    return g && g.target ? document.querySelector('[data-colette-id="' + g.target + '"]') : null;
+  }
+  function isTextField(e) {
+    return !!e && ((e.tagName === "INPUT" && !BUTTON_INPUTS.test(e.type)) || e.tagName === "TEXTAREA" ||
+                   e.tagName === "SELECT" || e.isContentEditable);
+  }
+  function renderGuide() {
+    if (!root) return;
+    var layer = root.getElementById("glayer"), g = guideHere();
+    if (!layer) return;
+    if (!g) {
+      layer.className = "glayer hidden"; layer.textContent = "";
+      if (guideRaf) { cancelAnimationFrame(guideRaf); guideRaf = null; }
+      shownStep = null; layer.removeAttribute("data-key");
+      return;
+    }
+    var key = g.step + "|" + g.target + "|" + g.text;  // reconstruit seulement si l'étape change
+    if (layer.getAttribute("data-key") === key) { if (!guideRaf) guideRaf = requestAnimationFrame(placeGuide); return; }
+    layer.setAttribute("data-key", key);
+    layer.className = "glayer"; layer.textContent = "";
+    var warn = g.irreversible ? " warn" : "";
+    var ring = el("div", "ring" + warn); ring.id = "gring"; layer.appendChild(ring);
+    var tip = el("div", "tip" + warn); tip.id = "gtip";
+    tip.appendChild(el("div", "n", (g.irreversible ? "⚠️ Step " : "Step ") + g.step));
+    tip.appendChild(el("div", "t", g.text));
+    var next = el("button", null, "Done ➜");
+    next.onclick = function () { send({ type: "guide_next", step: g.step }); };
+    tip.appendChild(next);
+    layer.appendChild(tip);
+    var t = guideTarget();
+    if (t && shownStep !== g.step) {
+      shownStep = g.step;
+      try { t.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { t.scrollIntoView(); }
+    }
+    if (!guideRaf) guideRaf = requestAnimationFrame(placeGuide);
+  }
+  function placeGuide() {  // suit l'élément à chaque image (défilement, page qui se décale)
+    guideRaf = null;
+    if (!root || !guideHere()) return;
+    var ring = root.getElementById("gring"), tip = root.getElementById("gtip");
+    if (!ring || !tip) return;
+    var t = guideTarget();
+    var areaW = window.innerWidth - (state.open ? PANEL_W : 0), tw = 320, th = tip.offsetHeight || 140;
+    if (t && t.isConnected) {
+      var r = t.getBoundingClientRect(), pad = 6;
+      ring.style.display = "";
+      ring.style.left = (r.left - pad) + "px"; ring.style.top = (r.top - pad) + "px";
+      ring.style.width = (r.width + 2 * pad) + "px"; ring.style.height = (r.height + 2 * pad) + "px";
+      var top = r.bottom + 16;
+      if (top + th > window.innerHeight - 8) top = Math.max(8, r.top - th - 16);
+      var left = Math.min(Math.max(8, r.left), Math.max(8, areaW - tw - 12));
+      tip.style.left = left + "px"; tip.style.top = top + "px";
+    } else {  // pas d'élément précis : consigne seule, en haut de la page
+      ring.style.display = "none";
+      tip.style.left = Math.max(8, (areaW - tw) / 2) + "px"; tip.style.top = "24px";
+    }
+    guideRaf = requestAnimationFrame(placeGuide);
+  }
+  // La personne a fait l'étape : clic sur l'élément, ou case remplie (change / Entrée).
+  function onGuideAction(e, kind) {
+    var g = guideHere(), t = guideTarget();
+    if (!g || !t || !e.target || !t.contains(e.target)) return;
+    var field = isTextField(t);
+    if (kind === "pointer" && field) return;  // cliquer dans une case n'est pas encore l'avoir remplie
+    if (kind === "key" && (!field || e.key !== "Enter")) return;
+    send({ type: "guide_clicked", step: g.step, how: kind });
+  }
+  document.addEventListener("pointerdown", function (e) { onGuideAction(e, "pointer"); }, true);
+  document.addEventListener("change", function (e) { onGuideAction(e, "change"); }, true);
+  document.addEventListener("keydown", function (e) { onGuideAction(e, "key"); }, true);
+
   function build() {
     host = document.createElement("colette-widget");
     host.setAttribute("aria-label", "Colette (assistant) — ignore");
@@ -680,6 +826,7 @@
     root = host.attachShadow({ mode: "open" });
     var style = el("style"); style.textContent = CSS; root.appendChild(style);
     var wrap = el("div", "wrap"); wrap.id = "wrap"; root.appendChild(wrap);
+    var glayer = el("div", "glayer hidden"); glayer.id = "glayer"; root.appendChild(glayer);
     mount();
     render();
   }
@@ -703,6 +850,7 @@
   function statusFor(scr) {
     if (state.status === "paused" && (scr === "call" || scr === "working")) return ["amber", "Paused"];
     if (scr === "call") return state.status === "speaking" ? ["blue", "Colette is speaking…"] : ["blue", "I'm listening…"];
+    if (scr === "working" && state.status === "guiding") return ["blue", "I'm guiding you step by step"];
     if (scr === "working") return state.status === "listening" ? ["blue", "I'm listening…"] : ["blue", "I'm browsing for you"];
     if (scr === "confirm") return ["amber", "Waiting for your approval"];
     if (scr === "failed") return ["amber", "Colette needs help"];
@@ -716,6 +864,7 @@
     var shown = {}; for (var f in state) if (f !== "subtitle") shown[f] = state[f];  // sous-titres mot à mot : non affichés
     var key = JSON.stringify([shown, connected]);
     renderLive();
+    renderGuide();
     if (key === lastKey) return;  // rien n'a changé : pas de reconstruction
     lastKey = key;
     var wrap = root.getElementById("wrap");
@@ -1116,6 +1265,10 @@
           if (HOSTED && state.login_check && state.login_check !== prev.login_check) tryHandoff(true);
           if (HOSTED && prev.busy && !state.busy) setTimeout(highlightDownload, 300);  // fin de démarche
           render();
+        } else if (msg.type === "scan") {  // guide pas à pas : le backend lit la page de la personne
+          var page = null;
+          try { page = window.__colette.scan(); } catch (e) { /* ignore */ }
+          send({ type: "scan_result", id: msg.id, page: page });
         } else if (msg.type === "screen") { shot = msg; renderLive(); syncPage(msg.url); }
         else if (msg.type === "busy") { busyServer = true; }
       } catch (e) { /* ignore */ }

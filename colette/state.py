@@ -52,6 +52,9 @@ class ColetteState:
     login_handoff: bool = False
     login_check: float = 0.0  # « c'est bon » entendu → la bulle vérifie la connexion et envoie le jeton
     transcript: list[dict] = field(default_factory=list)  # [{"who": "colette|vous", "text": str}] (6 dernières)
+    # guide pas à pas (repli quand l'agent H ne peut pas agir) :
+    # {"step", "text", "page", "target", "action", "irreversible"} — la bulle entoure l'élément
+    guide: Optional[dict] = None
 
 
 class StateServer:
@@ -65,6 +68,8 @@ class StateServer:
         self._confirm_future: Optional[asyncio.Future[bool]] = None
         self._status_before_confirm = "working"
         self._server = None
+        # Lecture de la page de la personne pour le guide pas à pas (local : branché par l'overlay CDP).
+        self.scanner: Optional[Callable[[], Awaitable[Optional[dict]]]] = None
 
     # ---- cycle de vie -------------------------------------------------------
     async def start(self) -> None:
@@ -212,9 +217,23 @@ class StateServer:
         finally:
             self._clients.discard(ws)
 
+    def _on_scan_result(self, msg: dict) -> None:
+        pass
+
+    async def scan_page(self) -> Optional[dict]:
+        """Page de la personne lue par la bulle (window.__colette.scan()), ou None."""
+        return await self.scanner() if self.scanner is not None else None
+
+    @property
+    def can_scan(self) -> bool:
+        return self.scanner is not None
+
     async def handle_message(self, msg: dict) -> None:
         """Traite un message de la bulle (quel que soit le transport)."""
         mtype = msg["type"]
+        if mtype == "scan_result":  # réponse de la bulle à une lecture de page (mode en ligne)
+            self._on_scan_result(msg)
+            return
         if mtype == "debug_click":
             logger.info("🖱️  clic {}x{} sur {}x{} → {} (trusted={})", msg.get("x"), msg.get("y"),
                         msg.get("w"), msg.get("h"), msg.get("target"), msg.get("trusted"))

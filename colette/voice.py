@@ -75,6 +75,7 @@ from pipecat.workers.runner import WorkerRunner
 from colette.h_agent import VALIDATE_STEP, Step, split_confirmation
 from colette.intents import is_login_done, is_login_question, is_noise, normalize, parse_intent
 from colette import site
+from colette.guide import ManualGuide
 from colette.narration import Narrator
 from colette.prompts import CONFIRMED_FOLLOW_UP, GREETING, H_GOAL_TEMPLATE, SYSTEM_PROMPT
 from colette.skills_loader import is_view_request, list_shortcuts, match_plan
@@ -90,6 +91,8 @@ ADVISOR_TEXT = ("You can call Free Mobile customer service on three, two, four, 
                 "from your Free phone. I'm still here if you need me.")
 
 _URL_RE = re.compile(r"https?://\S+")
+BUSY_TEXT = "I'm helping other people right now. Please try again in a minute."
+_QUOTA_RE = re.compile(r"quota|rate.?limit|too many|429|concurren", re.I)
 # Narration sur la connexion : dite une seule fois par démarche (« I'm logging in » ×2 sinon).
 _LOGIN_RE = re.compile(r"\b(log(ging)?\s*(you\s+)?in|login|sign(ing)?\s*in|connect|password|identifier|credentials)\b", re.I)
 INTRO = "Don't worry, I'm with you and I'll take the lead. You can say stop at any time."
@@ -222,6 +225,8 @@ class VoiceGate(FrameProcessor):
     def context(self) -> str:
         if self.voice.state.confirm_pending:
             return "confirm"
+        if self.voice.guiding:
+            return "guide"
         if self.voice.working:
             return "paused" if self.voice.paused else "working"
         return "idle"
@@ -289,6 +294,18 @@ class VoiceGate(FrameProcessor):
                 self._last_remind = time.monotonic()
                 logger.info("🎯 Pas de oui/non clair → rappel")
                 self._say_later("Just say yes or no.")
+            return True
+        if ctx == "guide":  # guide pas à pas : « c'est fait / suivant » avance, « stop » arrête, rien au LLM
+            norm = normalize(text)
+            if intent == "stop":
+                logger.info("🎯 « stop » (guide)")
+                self._dispatch({"type": "stop"})
+            elif intent in ("resume", "yes") or any(w in f" {norm} " for w in
+                                                    (" next ", " i did it ", " did it ", " i clicked ", " clicked ")):
+                logger.info("🎯 « c'est fait » (guide) : {!r}", text)
+                self.voice.guide.next()
+            else:
+                logger.info("🔇 Guide en cours, ignoré : {!r}", text)
             return True
         login_wait = self.pending and _types_herself(self._question)
         if intent in ("pause", "resume") and login_wait:
@@ -486,6 +503,9 @@ class ColetteVoice:
         # (AlwaysUserMuteStrategy) supprime toute InterruptionFrame venue de l'amont.
         self.tap = LLMTap(self)
         self.narrator = Narrator()
+        # Repli : quand l'agent H ne peut pas agir (quota plein) ou échoue, Colette guide la personne
+        # pas à pas sur SA page (LLM OpenRouter) — elle clique elle-même.
+        self.guide: Optional[ManualGuide] = ManualGuide(state, say=self.say) if state.can_scan else None
         state.on_client_message(self.on_client_message)
         state.update(shortcuts=list_shortcuts())
 
@@ -845,6 +865,9 @@ class ColetteVoice:
         result: dict
         speak = True  # le LLM résume-t-il ? (non : on a déjà tout dit nous-mêmes)
         try:
+            # Quota H plein (3 démarches en même temps) : on le dit tout de suite, avant de lire le plan
+            if hasattr(self.runner, "h_available") and await self.runner.h_available() == 0:
+                raise RuntimeError("H quota full")
             start = site.start_url()
             fresh = self.handoff and self.session_url and time.monotonic() - self.session_at < 240
             if hasattr(self.runner, "start_url_override"):
@@ -917,8 +940,17 @@ class ColetteVoice:
             if self._stopped or getattr(self.runner, "status", None) == "interrupted":
                 result, speak = {"statut": "stopped by the person"}, False
             else:
-                logger.exception("Démarche en échec")
-                result = {"statut": "failed", "erreur": str(e)}
+                busy = _QUOTA_RE.search(f"{e} {type(e).__name__}") or str(e) == "H quota full"
+                if busy:
+                    logger.warning("Agent H indisponible : quota plein ({})", e)
+                else:
+                    logger.exception("Démarche en échec")
+                if self.guide is not None and not self.hung_up:
+                    result, speak = await self._guide_fallback(objectif, busy=bool(busy), error=str(e))
+                elif busy:
+                    result, speak = {"statut": "busy: too many tasks at the same time, nothing was changed"}, False
+                else:
+                    result = {"statut": "failed", "erreur": str(e)}
         finally:
             self.working = False
             self.paused = False
@@ -937,7 +969,7 @@ class ColetteVoice:
             await self._hush()  # on laisse passer un instant avant la dernière phrase)
             await asyncio.sleep(0.5)
         self.state.update(outcome=outcome, busy=False, call=False, heard="")  # appel fini, micro coupé
-        final = self._final_speech(outcome)
+        final = "" if result.get("guided") else self._final_speech(outcome)  # le guide a déjà conclu
         if final:
             await self.say(final)
         result["suite"] = ("This task is finished and the person has already heard the result: "
@@ -945,6 +977,38 @@ class ColetteVoice:
                            "run_demarche again as usual.")
         logger.info("🛠️  run_demarche → {}", result)
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=False))
+
+    @property
+    def guiding(self) -> bool:
+        return self.guide is not None and self.guide.active
+
+    async def _guide_fallback(self, objectif: str, *, busy: bool, error: str) -> tuple[dict, bool]:
+        """L'agent H ne peut pas agir : Colette montre à la personne où cliquer, étape par étape."""
+        logger.info("🧭 Repli : guide pas à pas ({})", "quota H plein" if busy else "agent H en échec")
+        self._narrated_seq = self._step_seq
+        if self.bot_speaking:
+            await self._hush()
+            await asyncio.sleep(0.3)
+        self.state.update(confirm=None, outcome=None)
+        self.guide.intro = (
+            ("Many people are asking me for help right now, so I can't click for you. "
+             if busy else "I couldn't do it by myself. ")
+            + "But I'll show you where to click, step by step: the button is circled on your page. You click, I guide you."
+        )
+        context = ("The automatic agent was not available (too many people)." if busy
+                   else f"The automatic agent failed: {error[:200]}")
+        try:
+            out = await self.guide.run(objectif or "do the task on the Free Mobile customer area", context)
+        except Exception as e:
+            logger.exception("Guide pas à pas en échec")
+            return {"statut": "failed", "erreur": error, "erreur_guide": str(e)}, False
+        if out["outcome"] == "done":
+            return {"statut": "done with the step-by-step guide: the person clicked herself",
+                    "resultat": out["summary"], "guided": True}, False
+        if out["outcome"] == "stopped" or self._stopped:
+            return {"statut": "stopped by the person (step-by-step guide)", "guided": True}, False
+        return {"statut": "failed, even with the step-by-step guide", "resultat": out["summary"],
+                "guided": True}, False
 
     # ---- plan annoncé par H (annoncer_etapes / etape_terminee) ----------------
     async def _on_plan(self, labels: list[str]) -> None:
@@ -1092,6 +1156,9 @@ class ColetteVoice:
     def _outcome(self, result: dict) -> dict:
         statut = result.get("statut", "")
         nothing_changed = not self._approved
+        if statut.startswith("busy"):
+            return {"kind": "busy", "title": "I'm busy right now", "text": BUSY_TEXT,
+                    "summary": [], "nothing_changed": True}
         if statut.startswith("failed"):
             return {"kind": "failed", "title": "I couldn't finish",
                     "text": "The website isn't responding as expected.", "summary": [], "nothing_changed": nothing_changed}
@@ -1121,6 +1188,8 @@ class ColetteVoice:
         if kind == "success":
             text = outcome.get("text") or ""
             return f"All done. {text}".strip()
+        if kind == "busy":
+            return BUSY_TEXT + " Nothing was changed on your account."
         if kind == "failed":
             tail = " Nothing was changed on your account." if outcome.get("nothing_changed") else ""
             return "I couldn't finish. It's not your fault." + tail

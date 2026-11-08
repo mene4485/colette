@@ -479,6 +479,18 @@ class DemarcheRunner:
         if self._session is not None:
             await self._session.cancel()
 
+    async def h_available(self) -> Optional[int]:
+        """Places libres dans le quota de sessions H (3 sur notre plan), ou None si inconnu."""
+        try:
+            base = os.getenv("HAI_BASE_URL", "https://agp.eu.hcompany.ai")
+            async with httpx.AsyncClient(base_url=base, timeout=4, trust_env=False,
+                                         headers={"Authorization": f"Bearer {os.getenv('HAI_API_KEY', '')}"}) as http:
+                r = await http.get("/api/v2/sessions/quota")
+            return int(r.json()["available"]) if r.status_code == 200 else None
+        except Exception as e:
+            logger.debug("Quota H inconnu : {}", e)
+            return None
+
     async def pause(self) -> None:
         if self._session is not None:
             await self._session.pause()

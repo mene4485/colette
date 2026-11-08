@@ -1,18 +1,19 @@
-"""Guide manuel pas à pas : quand l'agent H échoue, Colette montre à la personne où cliquer.
+"""Step-by-step manual guide (fallback): when the H agent can't run (quota full) or fails,
+Colette shows the person where to click on HER OWN page, one step at a time (LLM via OpenRouter).
 
-Boucle (une étape à la fois) :
-1. lit la page de l'onglet actif via CDP (`window.__colette.scan()` dans static/widget.js) :
-   éléments cliquables visibles (id `data-colette-id`), titres, extrait de texte ;
-2. demande au LLM (OpenRouter) la PROCHAINE action : élément + consigne courte en français ;
-3. pousse `state.guide` → la bulle entoure l'élément et affiche une petite fenêtre avec la consigne ;
-   Colette la dit à voix haute ;
-4. attend que la personne clique sur l'élément (détecté par la bulle), tape dans le champ
-   (change / Entrée), clique « Suivant », dise « c'est fait », ou que la page change ;
-5. recommence jusqu'à ce que le LLM dise que l'objectif est atteint (ou stop / abandon).
+Loop (one step at a time):
+1. reads the person's page (`window.__colette.scan()` in static/widget.js, through `state.scan_page()`:
+   CDP in local mode, the WebSocket in online mode): visible clickable elements (`data-colette-id`),
+   headings, a text excerpt;
+2. asks the LLM for the NEXT action: element + short instruction in English;
+3. pushes `state.guide` → the bubble rings the element and shows a small instruction box;
+   Colette says it aloud;
+4. waits for the person to click the element (seen by the bubble), fill the field (change / Enter),
+   click "Done", say "done", or for the page to change;
+5. starts again until the LLM says the goal is reached (or stop / give up).
 
-La personne clique elle-même : c'est elle qui valide. Les boutons définitifs (valider, payer,
-résilier) sont signalés en orange avec un avertissement.
-Jamais de valeur de champ lue (mots de passe) : le scan ne remonte que des libellés.
+The person clicks herself: she is the one who validates. Final buttons (confirm, pay, cancel)
+are shown in orange with a warning. Field values (passwords) are never read: labels only.
 """
 
 from __future__ import annotations
@@ -20,12 +21,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from loguru import logger
 
 if TYPE_CHECKING:
-    from colette.overlay import OverlayInjector
     from colette.state import StateServer
 
 MAX_STEPS = 25
@@ -36,40 +37,41 @@ LLM_TIMEOUT_S = 20.0
 Say = Callable[[str], Awaitable[None]]
 
 PROMPT = """\
-Tu guides une personne âgée qui fait ELLE-MÊME une démarche sur un site web. Un agent \
-automatique a essayé avant et n'a pas réussi : maintenant c'est la personne qui clique, \
-et toi tu lui montres, une étape à la fois, où cliquer.
+You guide an elderly person who is doing an online task HERSELF on a website. An automatic agent \
+could not do it for her: now she clicks, and you show her, one step at a time, where to click.
 
-Objectif de la personne : <<GOAL>>
-Ce qui s'est passé avant : <<CONTEXT>>
-Étapes déjà montrées (de la plus ancienne à la plus récente) :
+Her goal: <<GOAL>>
+What happened before: <<CONTEXT>>
+Steps already shown (oldest first):
 <<HISTORY>>
 
-Page actuelle : <<TITLE>> — <<URL>>
-Titres de la page : <<HEADINGS>>
-Texte visible (extrait) : <<TEXT>>
+Current page: <<TITLE>> — <<URL>>
+Page headings: <<HEADINGS>>
+Visible text (excerpt): <<TEXT>>
 
-Éléments de la page (id | type | libellé | visible à l'écran sans défiler) :
+Page elements (id | type | label | visible on screen without scrolling):
 <<ELEMENTS>>
 
-Choisis la PROCHAINE action, une seule. Réponds UNIQUEMENT avec un objet JSON :
+Choose the NEXT action, only one. Answer ONLY with a JSON object:
 {"done": false, "id": "c12", "action": "click", "instruction": "...", "irreversible": false}
-"action" vaut "click", "type" (taper dans un champ) ou "select" (choisir dans une liste).
-Si l'objectif est atteint sur cette page, ou impossible à faire en ligne, réponds :
+"action" is "click", "type" (type in a field) or "select" (choose in a list).
+If the goal is reached on this page, or cannot be done online, answer:
 {"done": true, "summary": "..."}
 
-Règles pour "instruction" et "summary" :
-- français, vouvoiement, une ou deux phrases très courtes, mots simples ;
-- cite le libellé du bouton entre « » et dis où il se trouve (en haut, à gauche, au milieu…) ;
-- jamais d'URL, d'id, de mot technique (lien, onglet, élément, menu déroulant → « liste »).
-Pour un identifiant, un mot de passe ou un code : dis à la personne de le taper elle-même dans \
-la case entourée ; ne lui demande jamais de le dire à voix haute.
-Si le clic valide, paie, résilie, envoie ou change quelque chose de définitif : \
-"irreversible": true, et l'instruction rappelle ce qui sera validé (prix, date si visibles) et \
-dit de cliquer seulement si la personne est d'accord.
-Préfère les éléments visibles à l'écran. Si un bandeau de cookies ou une fenêtre gêne, \
-commence par le fermer (« Continuer sans accepter » ou « Refuser » de préférence). \
-Ne répète pas une étape qui vient d'être faite si la page a changé comme prévu.
+Rules for "instruction" and "summary":
+- English, polite, one or two very short sentences, simple words;
+- quote the button label between quotes and say where it is (top, left, middle…);
+- never a URL, an id or a technical word (link, tab, element, dropdown → "list").
+For an ID, a password or a code: tell her to type it herself in the circled box; never ask her \
+to say it aloud.
+If the click confirms, pays, cancels, sends, downloads a file or changes something for good: "irreversible": true, \
+and the instruction recalls what will be confirmed (price, date if shown) and tells her to click \
+only if she agrees.
+Prefer elements visible on screen. If a cookie banner or a popup is in the way, close it first \
+("Continue without accepting" or "Refuse" preferably). \
+Steps marked "(done by the person)" were done: NEVER give the same instruction again, even if the \
+page looks the same (a download or a click may not change the page). If that step was the last one \
+needed for her goal, answer {"done": true, ...}.
 """
 
 
@@ -108,20 +110,18 @@ def format_elements(elements: list[dict], limit: int = 150) -> str:
         kind = e.get("tag", "")
         if e.get("type"):
             kind += f"[{e['type']}]"
-        lines.append(f"{e.get('id')} | {kind} | {e.get('text') or '(sans libellé)'} | "
-                     f"{'oui' if e.get('inView') else 'non'}")
-    return "\n".join(lines) or "(aucun)"
+        lines.append(f"{e.get('id')} | {kind} | {e.get('text') or '(no label)'} | "
+                     f"{'yes' if e.get('inView') else 'no'}")
+    return "\n".join(lines) or "(none)"
 
 
 class ManualGuide:
-    """Guide la personne à la main, étape par étape, dans l'onglet actif du Chrome :9222."""
+    """Guides the person by hand, step by step, on her own page (`state.scan_page()`)."""
 
-    def __init__(self, state: "StateServer", overlay: "OverlayInjector", say: Say,
-                 model: Optional[str] = None) -> None:
+    def __init__(self, state: "StateServer", say: Say, model: Optional[str] = None) -> None:
         from openai import AsyncOpenAI  # import paresseux : les tests n'en ont pas besoin
 
         self.state = state
-        self.overlay = overlay
         self.say = say
         self.model = model or os.getenv("OPENROUTER_MODEL") or "google/gemini-2.5-flash"
         self._client = AsyncOpenAI(base_url="https://openrouter.ai/api/v1",
@@ -130,6 +130,8 @@ class ManualGuide:
         self._step = 0
         self.active = False
         self._stopped = False
+        self.intro = ("I'll show you where to click, step by step. You click, I guide you. "
+                      "The button to click is circled on your page.")
         state.on_client_message(self._on_client_message)
 
     # ---- événements de la bulle (clics, Suivant, stop, nouvelle page) ------------
@@ -156,47 +158,57 @@ class ManualGuide:
         """Renvoie {"outcome": "done"|"stopped"|"gave_up", "summary": str, "steps": [str]}."""
         self.active, self._stopped, self._step = True, False, 0
         history: list[str] = []
+        last_target: Optional[str] = None
         outcome, summary = "gave_up", ""
         self._drain()
         try:
-            self.state.update(status="guiding", open=True)
-            self.state.add_step("Je vous guide pas à pas")
-            await self.say("Je n'ai pas réussi à le faire toute seule. Je vais vous montrer où cliquer, "
-                           "étape par étape. C'est vous qui cliquez.")
+            self.state.update(status="guiding", open=True, steps=[])
+            self.state.add_step("I guide you step by step")
+            await self.say(self.intro)
             for n in range(1, MAX_STEPS + 1):
                 if self._stopped:
                     outcome = "stopped"
                     break
                 page = await self._scan()
                 if page is None:
-                    summary = "Je n'arrive pas à lire la page. Je suis désolée."
+                    summary = "I can't read the page. I'm sorry."
                     break
                 decision = await self._decide(goal, context, history, page)
                 if decision is None:
-                    summary = "Je n'arrive pas à trouver la suite sur cette page. Je suis désolée."
+                    summary = "I can't find the next step on this page. I'm sorry."
                     break
+                if not decision["done"] and history and (
+                        decision["instruction"] == history[-1].rsplit(" (done", 1)[0]
+                        or (decision["id"] and decision["id"] == last_target)):
+                    # même élément que l'étape que la personne vient de faire (téléchargement…) : c'était la dernière
+                    decision = {"done": True, "summary": "Very good, you did it. That was the last step."}
                 if decision["done"]:
-                    outcome, summary = "done", decision["summary"] or "C'est terminé."
+                    outcome, summary = "done", decision["summary"] or "It's done."
                     break
+                label = next((e.get("text") or "" for e in page.get("elements") or [] if e.get("id") == decision["id"]), "")
+                if re.search(r"download|confirm|validat|save|pay|cancel|delete|submit|send|activate|deactivate", label, re.I):
+                    decision["irreversible"] = True  # avertissement orange même si le LLM l'oublie
                 self._step = n
+                last_target = decision["id"]
                 await self._show(n, page["pageId"], decision)
                 event = await self._wait_advance(n, decision["instruction"])
                 if event == "stop":
                     outcome = "stopped"
                     break
                 if event == "timeout":
-                    summary = "Je ne vous entends plus, j'arrête le guide. Rappelez-moi quand vous voulez."
+                    summary = "I don't hear you anymore, so I'm stopping the guide. Call me back whenever you want."
                     break
-                history.append(decision["instruction"] + ("" if event != "page_loaded" else " (la page a changé)"))
+                history.append(decision["instruction"] + (" (done by the person, the page changed)"
+                                                          if event == "page_loaded" else " (done by the person)"))
                 await self._settle(event)
             else:
-                summary = "Nous avons fait beaucoup d'étapes sans arriver au bout. J'arrête le guide."
+                summary = "We did many steps without reaching the end. I'm stopping the guide."
         finally:
             self.active = False
             self._step = 0
             self.state.update(guide=None)
         if outcome == "stopped":
-            summary = summary or "D'accord, j'arrête le guide."
+            summary = summary or "OK, I'm stopping the guide."
         elif summary:
             self.state.set_subtitle(summary)
             await self.say(summary)
@@ -209,8 +221,7 @@ class ManualGuide:
     async def _scan(self) -> Optional[dict]:
         for attempt in range(4):
             try:
-                page = await self.overlay.evaluate_active(
-                    "window.__colette && window.__colette.scan ? window.__colette.scan() : null")
+                page = await self.state.scan_page()
                 if page and page.get("elements") is not None:
                     logger.info("🧭 Page lue : {} ({} éléments)", page.get("url"), len(page["elements"]))
                     return page
@@ -223,11 +234,11 @@ class ManualGuide:
         ids = {e.get("id") for e in page.get("elements") or []}
         prompt = (PROMPT
                   .replace("<<GOAL>>", goal)
-                  .replace("<<CONTEXT>>", context or "(rien)")
-                  .replace("<<HISTORY>>", "\n".join(f"- {h}" for h in history[-10:]) or "(aucune)")
+                  .replace("<<CONTEXT>>", context or "(nothing)")
+                  .replace("<<HISTORY>>", "\n".join(f"- {h}" for h in history[-10:]) or "(none)")
                   .replace("<<TITLE>>", page.get("title") or "")
                   .replace("<<URL>>", page.get("url") or "")
-                  .replace("<<HEADINGS>>", " / ".join(page.get("headings") or []) or "(aucun)")
+                  .replace("<<HEADINGS>>", " / ".join(page.get("headings") or []) or "(none)")
                   .replace("<<TEXT>>", page.get("text") or "")
                   .replace("<<ELEMENTS>>", format_elements(page.get("elements") or [])))
         note = ""
@@ -248,11 +259,11 @@ class ManualGuide:
                 logger.warning("Guide : LLM en échec ({}) : {}", type(e).__name__, e)
                 decision = None
             if decision is None:
-                note = "\n\nTa réponse précédente n'était pas un JSON valide. Réponds seulement le JSON."
+                note = "\n\nYour previous answer was not valid JSON. Answer only with the JSON."
                 continue
             if not decision["done"] and decision["id"] not in ids:
                 logger.warning("Guide : id inconnu {!r}", decision["id"])
-                note = f"\n\nL'id {decision['id']!r} n'existe pas dans la liste. Choisis un id de la liste."
+                note = f"\n\nThe id {decision['id']!r} is not in the list. Choose an id from the list."
                 fallback = {**decision, "id": None}
                 continue
             logger.info("🧭 Décision : {}", decision)
@@ -284,7 +295,7 @@ class ManualGuide:
             except asyncio.TimeoutError:
                 if not reminded:
                     reminded = True
-                    await self.say("Je vous attends. " + instruction)
+                    await self.say("I'm waiting for you. " + instruction)
                     continue
                 return "timeout"
             t = msg.get("type")

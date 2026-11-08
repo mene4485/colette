@@ -50,6 +50,7 @@ class OverlayInjector:
         self.injections = 0  # nb de pages initialisées (debug / tests)
         if state is not None:
             state.add_listener(self._on_state)
+            state.scanner = self.scan_active  # guide pas à pas : lecture de la page de la personne
 
     # ---- CDP bas niveau -----------------------------------------------------
     async def send(self, method: str, params: Optional[dict] = None, session_id: Optional[str] = None,
@@ -181,6 +182,7 @@ class OverlayInjector:
         if msg["type"] == "hello":  # nouvelle page : on lui envoie l'état courant
             if self.state is not None and session_id:
                 self._spawn(self._push(session_id, self.state.snapshot()))
+                self._spawn(self.state.handle_message({"type": "page_loaded"}))  # guide pas à pas
             return
         if self.state is not None:
             self._spawn(self.state.handle_message(msg))
@@ -198,6 +200,34 @@ class OverlayInjector:
             await self.send("Runtime.evaluate", {"expression": expr}, session_id=session_id, timeout=5.0)
         except Exception as e:  # onglet en pleine navigation : la page renverra « hello »
             logger.debug("Push d'état impossible ({}) : {}", session_id[:8], e)
+
+    # ---- évaluation dans l'onglet de la personne (guide pas à pas) ---------------
+    async def _eval(self, session_id: str, expr: str, timeout: float = 5.0):
+        res = await self.send("Runtime.evaluate", {"expression": expr, "returnByValue": True},
+                              session_id=session_id, timeout=timeout)
+        if res.get("exceptionDetails"):
+            raise CDPError(str(res["exceptionDetails"].get("text") or "exception JS"))
+        return (res.get("result") or {}).get("value")
+
+    async def active_session(self) -> Optional[str]:
+        """Onglet que la personne regarde : focus d'abord, sinon onglet visible."""
+        best, best_score = None, -1
+        probe = "({f: document.hasFocus(), v: document.visibilityState === 'visible'})"
+        for sid in list(self._attached.values()):
+            try:
+                info = await self._eval(sid, probe, timeout=2.0) or {}
+            except Exception:
+                continue
+            score = 2 * bool(info.get("f")) + bool(info.get("v"))
+            if score > best_score:
+                best, best_score = sid, score
+        return best
+
+    async def scan_active(self) -> Optional[dict]:
+        sid = await self.active_session()
+        if sid is None:
+            return None
+        return await self._eval(sid, "window.__colette && window.__colette.scan ? window.__colette.scan() : null")
 
     # ---- injection par onglet ----------------------------------------------
     def _maybe_attach(self, info: dict) -> None:
