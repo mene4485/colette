@@ -135,6 +135,27 @@ def _is_correction(text: str) -> bool:
     return len(norm.split()) >= 3 and bool(_CORRECTION.search(norm))
 
 
+# Changement d'avis en pleine démarche (« non, en fait je veux plutôt changer mon adresse ») :
+# phrases fortes seules, ou « non / en fait » + une nouvelle demande.
+_REDIRECT_STRONG = re.compile(
+    r"\b(change of plan|i changed my mind|i ve changed my mind|changed my mind|something else|"
+    r"forget (it|that|about it)|never mind|nevermind|let s do something else|do something else|"
+    r"j ai change d avis|autre chose|laissez tomber|laisse tomber|oubliez ca|oublie ca)\b")
+_REDIRECT_NEW = re.compile(
+    r"\b(i want|i d like|i would like|i d rather|i would rather|i need|can you|could you|let s|"
+    r"je veux|je voudrais|je prefere|plutot)\b")
+_REDIRECT_TURN = re.compile(r"\b(no|actually|instead|rather|in fact|non|en fait|plutot)\b")
+
+
+def _is_redirect(text: str) -> bool:
+    norm = normalize(text)
+    if len(norm.split()) < 3:
+        return False
+    if _REDIRECT_STRONG.search(norm):
+        return True
+    return bool(_REDIRECT_TURN.search(norm) and _REDIRECT_NEW.search(norm))
+
+
 _BARGE_WORDS = re.compile(r"\b(non|attendez|attends|stop|arrete|arretez|pardon|excusez|minute|une seconde|taisez|"
                           r"no|wait|hold on|hang on|sorry|excuse me|one second|quiet|cancel)\b")
 
@@ -276,7 +297,18 @@ class VoiceGate(FrameProcessor):
         intent = parse_intent(text, ctx)
         if self.command(intent, text):
             return True
+        if self.voice._redirect and not is_noise(text):  # démarche en cours d'arrêt : rien ne se perd
+            if parse_intent(text, "confirm") == "yes":
+                self.voice._redirect_ok = True
+            elif intent != "stop":
+                self.voice._redirect += " " + text
+            logger.info("🔀 (pendant l'arrêt) gardé : {!r}", text)
+            return True
         if ctx == "confirm":
+            if intent != "yes" and intent != "stop" and _REDIRECT_STRONG.search(normalize(text)):
+                logger.info("🔀 Nouvelle demande pendant la carte : {!r}", text)
+                self._spawn(self.voice.redirect(text))
+                return True
             if intent != "yes" and intent != "stop" and _is_correction(text):
                 logger.info("🎯 Correction pendant la carte → H refait le choix : {!r}", text)
                 self.voice._correction = text
@@ -308,6 +340,13 @@ class VoiceGate(FrameProcessor):
                 logger.info("🔇 Guide en cours, ignoré : {!r}", text)
             return True
         login_wait = self.pending and _types_herself(self._question)
+        # Pendant une question de H (« which plan? »), « I'd rather the €2 plan » est une réponse :
+        # seul un changement d'avis net (« I changed my mind », « something else ») arrête la démarche.
+        redirect = _REDIRECT_STRONG.search(normalize(text)) if self.pending else _is_redirect(text)
+        if self.voice.working and intent != "stop" and not login_wait and redirect:
+            logger.info("🔀 Nouvelle demande en pleine démarche : {!r}", text)
+            self._spawn(self.voice.redirect(text))
+            return True
         if intent in ("pause", "resume") and login_wait:
             logger.info("🔇 Connexion en cours, « {} » ignoré : {!r}", intent, text)
             return True  # « attendez, je tape » : H attend déjà, rien à dire
@@ -484,6 +523,7 @@ class ColetteVoice:
         self._announced_steps: set[int] = {0}  # étapes déjà annoncées « Maintenant, je vais… »
         self._login_said = False
         self._intro_said = False
+        self._redirect = ""  # nouvelle demande dite en pleine démarche : on arrête et on repart dessus
         self.hung_up = False  # « Raccrocher » : plus un mot, plus d'écoute, jusqu'au prochain appel
         self._confirmations: list[tuple[str, bool]] = []  # confirm_change de cette démarche (résumé, oui ?)
         self._correction = ""  # « non, je veux l'autre » : renvoyé à H comme consigne, pas comme refus
@@ -853,7 +893,8 @@ class ColetteVoice:
         self._fixed_plan = False
         self._announced_steps: set[int] = {0}  # la 1re étape est dite avec le plan
         self._login_said = False  # une phrase sur la connexion a déjà été dite
-        self._intro_said = False
+        self._intro_said = getattr(self, "_skip_intro", False)  # après un changement d'avis : pas d'intro bis
+        self._skip_intro = False
         self.narrator.reset()
         self._confirmations = []
         self._approved = False
@@ -961,6 +1002,31 @@ class ColetteVoice:
             except Exception as e:
                 logger.warning("Fermeture de la session H : {}", e)
             self.state.update(status="done")
+        if self._redirect:  # la personne a changé d'avis : pas d'écran de fin, on repart sur sa nouvelle demande
+            text, self._redirect = self._redirect, ""
+            confirmed = getattr(self, "_redirect_ok", False)
+            self.state.update(busy=False, outcome=None, confirm=None, guide=None, steps=[], title="",
+                              status="listening", call=True, open=True)
+            result = {"statut": "stopped: the person changed her request, nothing was confirmed"}
+            logger.info("🔀 Démarche arrêtée, nouvelle demande : {!r}", text)
+            await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=False))
+            me = asyncio.current_task()
+
+            async def _replan() -> None:
+                if me is not None:
+                    await asyncio.wait({me}, timeout=5)  # run_demarche refuse tant que celle-ci tourne
+                await self._ask_llm(
+                    "The person changed her mind during the task. She just said: « " + text + " ». "
+                    "The previous task was stopped and nothing was confirmed. "
+                    + ("She already said yes to it: say in one short sentence what you will do now and call "
+                       "run_demarche right away with the new precise goal."
+                       if confirmed else
+                       "Rephrase her new request in one short sentence and ask if that's right (then call "
+                       "run_demarche when she confirms). If it is not clear, ask her one short question."))
+            task = asyncio.create_task(_replan())
+            self.gate._tasks.add(task)
+            task.add_done_callback(self.gate._tasks.discard)
+            return
         # Fin : écran final et dernière phrase en même temps, une seule fois, puis plus rien.
         # Le LLM ne résume plus (il redisait le résultat ~10 s après l'écran « C'est fait »).
         outcome = self._outcome(result)
@@ -977,6 +1043,29 @@ class ColetteVoice:
                            "run_demarche again as usual.")
         logger.info("🛠️  run_demarche → {}", result)
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=False))
+
+    async def redirect(self, text: str) -> None:
+        """« Non, en fait je veux autre chose » : arrête la démarche en cours, puis repart sur la nouvelle."""
+        running = self._demarche_task is not None and not self._demarche_task.done()
+        if not running or self._redirect or self._stopped:
+            return
+        self._redirect = text
+        self._redirect_ok = False
+        self._skip_intro = True
+        self._stopped = True
+        self.paused = False
+        self._narrated_seq = self._step_seq
+        self.gate.cancel_pending()
+        self.state.resolve_confirm(False)
+        if self.guide is not None:
+            self.guide.stop()
+        await self._hush()
+        await asyncio.sleep(0.2)
+        await self.say("OK, I'm stopping that. Nothing was changed. Let's do what you want instead.")
+        try:
+            await self.runner.cancel()
+        except Exception as e:
+            logger.warning("Annulation H (nouvelle demande) : {}", e)
 
     @property
     def guiding(self) -> bool:
