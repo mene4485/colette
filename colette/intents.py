@@ -108,7 +108,9 @@ FILLERS = {"euh", "heu", "hum", "hmm", "hm", "mmh", "mm", "bah", "ben", "beh", "
            "uh", "um", "umm", "er", "erm", "mhm", "so", "well", "thank", "thanks", "you"}
 HALLUCINATIONS = ("sous titrage", "sous titres", "merci d avoir regarde", "abonnez vous",
                   "amara org", "st 501",
-                  "thanks for watching", "thank you for watching", "subscribe", "subtitles by")
+                  "thanks for watching", "thank you for watching", "subscribe", "subtitles by",
+                  "please be positive", "i love you", "see you next time", "see you in the next video",
+                  "thank you so much", "thank you very much")
 
 
 def is_noise(text: str) -> bool:
