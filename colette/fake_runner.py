@@ -90,6 +90,12 @@ class FakeDemarcheRunner:
                 await _maybe_await(on_step_done(n))
 
         await self._sleep(1.0)
+        if os.getenv("COLETTE_FAKE_FORM") == "1" and ask_user is not None:  # test de la saisie par la personne
+            answer = await ask_user("Please type your new address yourself in the form, then say done.")
+            logger.info("[fake] réponse au formulaire : {}", answer)
+            if self._cancelled:
+                raise RuntimeError("Task cancelled by the person")
+            return "Your new address is saved: " + str(answer)[:200]
         if on_plan is not None:
             logger.info("[fake] annoncer_etapes {}", FAKE_PLAN)
             await _maybe_await(on_plan(list(FAKE_PLAN)))

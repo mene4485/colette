@@ -498,8 +498,56 @@
       .catch(function () { if (loud) send({ type: "handoff_missing" }); });
   }
 
+  // ---- formulaire rempli par la personne (mode en ligne) ----
+  // L'agent travaille dans le navigateur cloud de H : la personne tape ses nouvelles informations dans le
+  // formulaire de SA page ; « Done » → la bulle envoie ce qu'elle a tapé (jamais un mot de passe) et l'agent
+  // le recopie. Après son « oui » et l'enregistrement par l'agent, on rejoue l'enregistrement sur sa page.
+  var pendingForm = null;
+  function pageForm() {
+    var forms = document.querySelectorAll("form");
+    for (var i = 0; i < forms.length; i++) {
+      if (/\/account\/login/.test(forms[i].action || "")) continue;
+      if (forms[i].querySelector("input:not([type=hidden]):not([type=submit]),select,textarea")) return forms[i];
+    }
+    return null;
+  }
+  function focusForm() {
+    var f = pageForm(); if (!f) return;
+    var first = f.querySelector("input:not([type=hidden]):not([type=submit]):not([type=password]),select,textarea");
+    try { f.scrollIntoView({ block: "center", behavior: "smooth" }); if (first) first.focus(); } catch (e) { /* ignore */ }
+  }
+  function collectForm() {
+    var f = pageForm(), vals = [];
+    if (f) {
+      var fields = f.querySelectorAll("input,select,textarea");
+      for (var i = 0; i < fields.length; i++) {
+        var e = fields[i];
+        if (/^(hidden|submit|button|reset|password|checkbox|radio|file|image)$/.test(e.type || "")) continue;
+        var changed = e.tagName === "SELECT" ? !e.options[e.selectedIndex] || !e.options[e.selectedIndex].defaultSelected
+                                             : e.value !== e.defaultValue;
+        vals.push({ label: labelOf(e).replace(/\s*\(selected:.*\)$/, ""), value: e.value, changed: changed });
+      }
+      var only = vals.filter(function (v) { return v.changed; });
+      if (only.length) vals = only;  // seulement ce qu'elle a changé (sinon tout, l'agent comparera)
+      pendingForm = { action: f.action, body: new URLSearchParams(new FormData(f)).toString() };
+    }
+    send({ type: "form_values", values: vals });
+  }
+  function replayForm() {
+    if (!pendingForm) return;
+    var pf = pendingForm; pendingForm = null;
+    if (!state.outcome || state.outcome.kind !== "success") return;  // refusé / arrêté : rien n'est enregistré
+    fetch(pf.action, { method: "POST", body: new URLSearchParams(pf.body), credentials: "same-origin" })
+      .then(function (r) { return r.text().then(function (t) { swapPage(t, r.url, false); }); })
+      .catch(function () { /* ignore */ });
+  }
+
   document.addEventListener("submit", function (ev) {
     var f = ev.target;
+    // pendant la saisie : « Save » sur sa page = « Done » (l'enregistrement se fait après son accord)
+    if (HOSTED && state.form_handoff && f && !/\/account\/login/.test(f.action || "")) {
+      ev.preventDefault(); ev.stopImmediatePropagation(); collectForm(); return;
+    }
     if (!HOSTED || !connected || !(state.busy || state.call) || !f || !f.action) return;
     if (!/\/account\/login/.test(f.action)) return;
     ev.preventDefault();
@@ -596,7 +644,7 @@
   // ---- écran de l'agent (mode en ligne) : captures du navigateur cloud de H ----
   function renderLive() {
     if (!HOSTED || !root) return;
-    var show = !!shot && state.open && (state.busy || !!state.confirm) && !state.login_handoff &&
+    var show = !!shot && state.open && (state.busy || !!state.confirm) && !state.login_handoff && !state.form_handoff &&
       state.status !== "guiding" && !state.guide;
     if (!liveEl) {
       liveEl = el("div", "live");
@@ -939,6 +987,13 @@
       hb.appendChild(el("span", null, "Log in yourself on the page, on the left. Colette can't see what you type."));
       body.insertBefore(hb, body.firstChild);
     }
+    if (HOSTED && state.form_handoff && body.firstChild) {
+      var fb = el("div", "hintbox");
+      fb.appendChild(svg("lock"));
+      fb.appendChild(el("span", null, "Type your new details in the form on the page, on the left. Then click Done."));
+      body.insertBefore(fb, body.firstChild);
+      foot.insertBefore(button("", "Done ✓", collectForm), foot.firstChild);
+    }
     if (HOSTED && (scr === "call" || scr === "working" || scr === "confirm")) {
       foot.insertBefore(typeBox(), foot.firstChild);  // sans micro : on peut aussi écrire à Colette
       if (hadFocus) typeForm.firstChild.focus();
@@ -1273,6 +1328,9 @@
           state = msg.state;
           if (HOSTED && state.login_handoff && !prev.login_handoff) tryHandoff(false);  // déjà connectée ?
           if (HOSTED && state.login_check && state.login_check !== prev.login_check) tryHandoff(true);
+          if (HOSTED && state.form_check && state.form_check !== prev.form_check) collectForm();
+          if (HOSTED && state.form_handoff && !prev.form_handoff) focusForm();
+          if (HOSTED && prev.busy && !state.busy) replayForm();
           if (HOSTED && prev.busy && !state.busy) setTimeout(highlightDownload, 300);  // fin de démarche
           render();
         } else if (msg.type === "scan") {  // guide pas à pas : le backend lit la page de la personne

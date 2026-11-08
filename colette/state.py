@@ -51,6 +51,9 @@ class ColetteState:
     # mode en ligne : la personne se connecte elle-même sur SA page ; la bulle partage ensuite la session
     login_handoff: bool = False
     login_check: float = 0.0  # « c'est bon » entendu → la bulle vérifie la connexion et envoie le jeton
+    # mode en ligne : la personne remplit le formulaire sur SA page, la bulle envoie ce qu'elle a tapé à l'agent
+    form_handoff: bool = False
+    form_check: float = 0.0  # « done » entendu → la bulle lit le formulaire et envoie les valeurs
     transcript: list[dict] = field(default_factory=list)  # [{"who": "colette|vous", "text": str}] (6 dernières)
     # guide pas à pas (repli quand l'agent H ne peut pas agir) :
     # {"step", "text", "page", "target", "action", "irreversible"} — la bulle entoure l'élément
@@ -240,7 +243,9 @@ class StateServer:
             logger.info("🖱️  clic {}x{} sur {}x{} → {} (trusted={})", msg.get("x"), msg.get("y"),
                         msg.get("w"), msg.get("h"), msg.get("target"), msg.get("trusted"))
             return
-        if mtype == "text":  # texte tapé (peut être un mot de passe) : jamais dans les logs
+        if mtype == "form_values":  # adresse, e-mail… : jamais dans les logs
+            logger.info("Bulle → formulaire rempli ({} champ(s))", len(msg.get("values") or []))
+        elif mtype == "text":  # texte tapé (peut être un mot de passe) : jamais dans les logs
             logger.info("Bulle → texte tapé ({} caractères)", len(str(msg.get("text") or "")))
         else:
             logger.info("Bulle → {}", json.dumps(msg, ensure_ascii=False))

@@ -403,6 +403,11 @@ class VoiceGate(FrameProcessor):
                 # La personne tape ses identifiants : on attend « c'est bon » sans rien dire.
                 logger.info("🔇 Connexion en cours, ignoré : {!r}", text)
                 return True
+            if _types_info(self._question) and self.voice.handoff:
+                # En ligne : « done » → la bulle lit le formulaire de SA page et envoie les valeurs.
+                logger.info("📝 « done » → lecture du formulaire sur la page")
+                self.voice.state.update(form_check=time.time())
+                return True
             if is_login_question(self._question) and self.voice.handoff:
                 # Mode en ligne : « c'est bon » → la bulle vérifie la connexion de SA page et envoie le jeton.
                 logger.info("🔑 « c'est bon » → vérification de la connexion sur la page")
@@ -856,6 +861,19 @@ class ColetteVoice:
         if t == "handoff_missing":
             await self.say("I don't see you logged in yet. Type your ID and your password on the page, "
                            "on the left, then click \"Log in\".")
+            return
+        if t == "form_values":  # formulaire rempli par la personne sur sa page (mode en ligne)
+            vals = [v for v in (msg.get("values") or []) if str(v.get("value") or "").strip()]
+            if not (self.gate.pending and _types_info(self.gate._question)):
+                return
+            if not vals:
+                await self.say("I don't see anything typed in the form yet. Type your details, then click Done.")
+                return
+            typed = "; ".join(f"{v.get('label') or 'field'}: {v.get('value')}" for v in vals)
+            self.state.add_line("vous", "✍️ " + ", ".join(str(v.get("value")) for v in vals))
+            self.gate.resolve("The person typed these values herself in the form: " + typed +
+                              ". Type exactly these values in the same fields of your form (replace the old "
+                              "text), check them, then call confirm_change with the old and new values.")
             return
         running = self._demarche_task is not None and not self._demarche_task.done()
         if t in ("call", "shortcut", "retry"):
@@ -1522,8 +1540,12 @@ class ColetteVoice:
             self.state.update(login_handoff=True)
         elif typing:  # saisie : jamais à l'oral (la dictée se coupe trop tôt et se trompe)
             question = question.rstrip(" .") + "."
-            question += (" Type it in the text box on the right, then press Send."
-                         if self.handoff else " Take your time, and say \"done\" when you have finished.")
+            if self.handoff:  # en ligne : elle remplit le formulaire de SA page, la bulle transmet à l'agent
+                question = ("Please type your new details yourself in the form on the page, on the left. "
+                            "Take your time, then say \"done\" or click \"Done\".")
+                self.state.update(form_handoff=True)
+            else:
+                question += " Take your time, and say \"done\" when you have finished."
         self.state.update(status="listening", subtitle=question, heard="")
         await self.say(question)
         try:
@@ -1533,6 +1555,8 @@ class ColetteVoice:
         finally:
             if self.state.state.login_handoff:
                 self.state.update(login_handoff=False)
+            if self.state.state.form_handoff:
+                self.state.update(form_handoff=False)
         self._narrated_seq = self._step_seq
         self._last_narration = time.monotonic()  # pas de narration tout de suite : H regarde d'abord la page
         if login_idx is not None and answer != "(no answer)":
