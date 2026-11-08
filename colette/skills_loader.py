@@ -109,7 +109,8 @@ def list_shortcuts(directory: Optional[Path] = None) -> list[dict]:
     return [item for _, item in sorted(items, key=lambda x: (x[0], x[1]["label"]))]
 
 
-VIEW_WORDS = ("see", "check", "view", "give me", "tell me", "how much", "find the", "find my", "what s the", "look at", "show me", "find out", "what is", "what s", "read",
+VIEW_WORDS = ("see", "check", "view", "give me", "tell me", "how much", "does my", "is my", "do i need",
+              "do i have to", "will my", "can i use", "does it work", "work there", "work in", "find the", "find my", "what s the", "look at", "show me", "find out", "what is", "what s", "read",
               "know", "get my", "voir", "consulter", "récupérer", "recuperer", "afficher", "regarder", "connaître",
               "connaitre", "vérifier", "verifier", "lire", "savoir", "quelle est", "quel est", "retrouver")
 CHANGE_WORDS = ("change", "update", "modify", "edit", "replace", "correct", "switch", "move to",
@@ -143,6 +144,11 @@ def match_plan(objectif: str, directory: Optional[Path] = None) -> "tuple[str, l
         if not steps:
             continue
         pos = min((text.find(k) for k in keywords if k in text), default=-1)
-        if pos >= 0 and (best is None or pos < best[0]):  # le mot-clé cité en premier gagne
-            best = (pos, meta.get("name") or path.stem, steps)
+        try:
+            prio = int(meta.get("priority", "0"))  # ex. voyage > forfait : « my plan works in China »
+        except ValueError:
+            prio = 0
+        # priorité la plus haute d'abord, puis le mot-clé cité en premier
+        if pos >= 0 and (best is None or (prio, -pos) > (best[3], -best[0])):
+            best = (pos, meta.get("name") or path.stem, steps, prio)
     return (best[1], best[2]) if best else None
