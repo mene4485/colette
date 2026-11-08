@@ -4,7 +4,7 @@ description: Use when the person wants to talk to someone at Free: customer serv
 label: Talk to an advisor
 ask: I'd like an advisor from Free to call me back.
 keywords: call me back | callback | call back | customer service | advisor | talk to someone | speak to someone
-steps: Open your customer area | Log in | Open the help page | Fill in the callback request | Confirm with your approval
+steps: Open your customer area | Log in | Open the help page | Choose the reason and the time with you | Check your phone number | Confirm with your approval
 steps_view: Open your customer area | Log in | Open the help page | Read the number and the hours
 order: 5
 ---
@@ -23,20 +23,29 @@ or cancel a booked callback.
    back on …", mention that callback with its time.
 
 ## Book a callback
+Three things are needed, asked ONE at a time with `ask_user` (short choices, said aloud), in this order.
+Never choose for her: if her request already gives one of them clearly, do not ask it again.
 1. Open "Help". If a box already says "An advisor will call you back on …", stop and answer with the
    booked time (one callback at a time; cancel it first if she wants another one).
-2. The reason, the time and the number come from the person. If the reason or the time is missing,
-   call `ask_user` with one short question listing the choices the page offers
-   (reasons: "My bill", "My plan", "A technical problem", "Other"; times: read them from the list).
-3. In "Reason for your request", choose the reason. In "Callback time", choose the time.
-4. In "Number to call back", keep the number shown. If the person wants another number, click the field
-   and call `ask_user`: "Please type the number to call back yourself in the form, then say done."
-5. Call `confirm_change` with `costs_money` = false and a summary such as:
+2. Reason. Read the four choices of "Reason for your request" and call `ask_user`, for example:
+   "Why would you like to be called back? About your bill, your plan, a technical problem, or something else?"
+   Choose the matching option in the list ("Other" for something else).
+3. Time. Open "Callback time" and read the four times it offers. Call `ask_user` listing them, for example:
+   "When would you like to be called? Today from 6 pm to 8 pm, tomorrow from 10 am to 12 pm, tomorrow from
+   2 pm to 4 pm, or tomorrow from 6 pm to 8 pm?" Choose the time she names. If it is not in the list,
+   ask again with the list.
+4. Number. Read the number shown in "Number to call back" and ALWAYS check it with her, digit pairs
+   spoken clearly: `ask_user` "The advisor will call you on 06 12 34 56 78. Is that the right number?"
+   - "yes" → keep it.
+   - "no" → click the field, select all its text, and call `ask_user`:
+     "Please type the number to call back yourself in the form, then say done." Then use the number she
+     typed, and check it with her once more the same way.
+5. Call `confirm_change` with `costs_money` = false and a summary with the three choices, such as:
    "ask an advisor to call you back tomorrow from 2 pm to 4 pm on 06 12 34 56 78, about your bill".
 6. Only if the reply starts with "Approved": click "Ask to be called back".
    If refused: click nothing and answer that no callback was booked.
 7. Check the green box "An advisor will call you back on …" and answer with it. If a red message
-   appears, answer with that message.
+   appears (e.g. the number is not valid), tell her and fix that field with her.
 
 ## Cancel a booked callback
 1. Open "Help" and find the box "An advisor will call you back on <number> <time> (reason: <reason>)".
