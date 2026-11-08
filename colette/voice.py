@@ -671,7 +671,8 @@ class ColetteVoice:
             await self._play_script()
 
     # ---- parole ------------------------------------------------------------
-    async def say(self, text: str, *, to_context: bool = False) -> None:
+    async def say(self, text: str, *, to_context: bool = False, progress: bool = False) -> None:
+        self._progress_speech = progress  # annonce d'étape / narration d'un clic : coupée si H la dépasse
         if self.hung_up:
             logger.info("🔕 (raccroché, pas dit) {}", text)
             return
@@ -1000,6 +1001,11 @@ class ColetteVoice:
         if steps and steps[-1]["label"] == VALIDATE_STEP:
             number = min(number, len(steps) - 1)  # « Valider » ne se coche qu'après le oui
         self.state.complete_through(number)
+        if self.bot_speaking and getattr(self, "_progress_speech", False):
+            # Colette annonce encore une étape (ou un clic) que H vient de dépasser : on la coupe
+            task = asyncio.create_task(self._hush())
+            self.gate._tasks.add(task)
+            task.add_done_callback(self.gate._tasks.discard)
         # H coche souvent plusieurs étapes d'un coup (déjà connecté : 1 puis 2 en 4 ms) : on n'annonce
         # que la dernière, sinon Colette dit « now I will log in » alors que c'est déjà fait.
         self._announce_target = number
@@ -1019,11 +1025,14 @@ class ColetteVoice:
             if not self.bot_speaking or self._announce_target != number:
                 break
             await asyncio.sleep(0.1)
-        if self.bot_speaking or self._announce_target != number or self.state.confirm_pending:
+        steps = self.state.state.steps
+        stale = not (0 <= number < len(steps)) or steps[number].get("state") != "doing"
+        if stale or not self.working or self.bot_speaking or self._announce_target != number \
+                or self.state.confirm_pending:
             logger.info("💬 (annonce jetée : Colette parlait encore) étape {}", number + 1)
             self._announced_steps.add(number)
             return
-        self._spawn_say(self._step_announcement(number))
+        self._spawn_say(self._step_announcement(number), progress=True)
 
     def _step_announcement(self, idx: int) -> str:
         """« Maintenant, je vais <étape idx (0-based)> » une seule fois par étape, sinon ""."""
@@ -1040,11 +1049,11 @@ class ColetteVoice:
         n = nums[idx] if idx < len(nums) else str(idx + 1)
         return f"Step {n}: now I will {_lower_first(label)}."
 
-    def _spawn_say(self, text: str) -> None:
+    def _spawn_say(self, text: str, progress: bool = False) -> None:
         if not text or self._stopped or self.paused:
             return
         self._last_narration = time.monotonic() + 2.0  # la narration des clics ne passe pas par-dessus
-        task = asyncio.create_task(self.say(text))
+        task = asyncio.create_task(self.say(text, progress=progress))
         self.gate._tasks.add(task)
         task.add_done_callback(self.gate._tasks.discard)
 
@@ -1164,6 +1173,9 @@ class ColetteVoice:
             self.state.resolve_confirm(False)
             ok = False
         logger.info("✋ Réponse : {}", "OUI" if ok else "NON")
+        if self.bot_speaking:  # répondu (bouton ou voix) avant la fin de la question : on la coupe net
+            await self._hush()
+            await asyncio.sleep(0.2)
         if self._stopped:
             return False
         if not ok and self._correction:
@@ -1215,7 +1227,7 @@ class ColetteVoice:
                 elif self._can_narrate():
                     self._last_narration = time.monotonic()
                     logger.info("💬 {} (dite {:.1f} s après l'étape)", text, age)
-                    await self.say(text.rstrip(".") + ".")
+                    await self.say(text.rstrip(".") + ".", progress=True)
                 else:
                     logger.info("💬 (affichée, pas dite) {}", text)
         except Exception:
@@ -1293,6 +1305,15 @@ class ColetteVoice:
                 self.on_user_final(line)
                 if not self.gate.route(line):
                     logger.warning("📜 « {} » non reconnue comme commande", line)
+                continue
+            if line.startswith("^"):  # répond dès que la question / la carte apparaît, sans attendre la fin
+                line = line[1:].strip()
+                while not (self.gate.pending or self.state.confirm_pending):
+                    await asyncio.sleep(0.2)
+                await asyncio.sleep(1.0)
+                logger.info("📜 (réponse immédiate) {}", line)
+                self.on_user_final(line)
+                self.gate.route(line)
                 continue
             if line.startswith("?"):
                 line = line[1:].strip()
