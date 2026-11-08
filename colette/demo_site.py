@@ -59,8 +59,23 @@ OPTIONS = {
     "international": {"name": "International Calls option", "price": 3.99,
                       "details": "Unlimited calls to landlines in 100 destinations."},
     "max": {"name": "Max option", "price": 9.99,
-            "details": "35 GB from 100 destinations and streaming services included."},
+            "details": "35 GB of data and unlimited calls and texts to France from 100 destinations "
+                       "(China, United States, Canada, Japan, Morocco…)."},
 }
+
+# Use abroad (roaming). Included zone of each plan; the Max option adds the "world" zone.
+EUROPE = "the European Union, Norway, Iceland, Switzerland, the UK and the French overseas departments"
+ABROAD = {
+    "2e": {"zone": EUROPE, "data": "no data abroad", "calls": "2 hours of calls, unlimited texts"},
+    "serie": {"zone": EUROPE, "data": "12 GB per month", "calls": "unlimited calls and texts to France"},
+    "5g": {"zone": EUROPE, "data": "35 GB per month", "calls": "unlimited calls and texts to France"},
+    "max": {"zone": EUROPE + " and 100 other destinations (China, United States, Canada, Japan, Morocco…)",
+            "data": "35 GB per month", "calls": "unlimited calls and texts to France"},
+}
+WORLD = ["China", "United States", "Canada", "Japan", "South Korea", "Australia", "Brazil", "Mexico",
+         "Morocco", "Tunisia", "Turkey", "Thailand", "Vietnam", "India", "South Africa", "Israel"]
+OUT_OF_ZONE = {"data": "€10 per GB", "calls": "€2.19 per minute to call France, €0.95 per minute to answer",
+               "texts": "€0.30 per text"}
 
 CALLBACK_REASONS = ["My bill", "My plan", "A technical problem", "Other"]
 CALLBACK_SLOTS = [(10, 12), (14, 16), (18, 20)]  # callback time slots, hours
@@ -301,7 +316,8 @@ document.getElementById('cookies').remove();}</script>
 
 NAV = [("accueil", "/account/", "Home"), ("forfait", "/account/forfait", "My plan"),
        ("factures", "/account/factures", "Usage & bills"), ("infos", "/account/infos", "My details"),
-       ("options", "/account/options", "My options"), ("aide", "/account/aide", "Help")]
+       ("options", "/account/options", "My options"), ("abroad", "/account/international", "Travelling abroad"),
+       ("aide", "/account/aide", "Help")]
 
 
 def e(x) -> str:
@@ -383,7 +399,34 @@ def p_forfait(a: dict, cancelled: bool = False) -> str:
     return page("My plan", f"""<h1>My plan</h1>{pending}<div class="card"><h2>Current plan</h2>
 {plan_block(a["plan"], a, choose=False)}<p class="muted">Line {e(a["line"])} · Commitment: no commitment</p>
 <div class="actions"><a class="btn" href="/account/forfait/changer">Change plan</a>
-<a class="btn sec" href="/account/options">Manage my options</a></div></div>""", a, "forfait")
+<a class="btn sec" href="/account/options">Manage my options</a>
+<a class="btn sec" href="/account/international">Using my line abroad</a></div></div>""", a, "forfait")
+
+
+def p_abroad(a: dict) -> str:
+    plan, ab = PLANS[a["plan"]], ABROAD[a["plan"]]
+    world = "max" in a.get("options", []) or a["plan"] == "max"
+    countries = ", ".join(WORLD)
+    if world:
+        world_block = (f'<div class="ok">Your <b>Max option</b> is active: from {e(countries)} and the other '
+                       'destinations of the list, you have <b>35 GB per month</b> and <b>unlimited calls and texts '
+                       'to France</b>, at no extra cost.</div>')
+    else:
+        world_block = (f'<div class="info"><b>Not included in your plan:</b> {e(countries)} and the rest of the '
+                       f'world. Without an option you pay: data {OUT_OF_ZONE["data"]}, calls {OUT_OF_ZONE["calls"]}, '
+                       f'texts {OUT_OF_ZONE["texts"]}.</div>'
+                       '<p><b>Travelling to one of these countries?</b> Activate the <b>Max option</b> '
+                       f'({euros(OPTIONS["max"]["price"])}/month, no commitment) before you leave: 35 GB per month and '
+                       'unlimited calls and texts to France from 100 destinations, including China, the United States, '
+                       'Canada and Japan.</p><a class="btn" href="/account/options">Activate the Max option</a>')
+    return page("Travelling abroad", f"""<h1>Using my line abroad</h1>
+<div class="card"><h2>Included in your plan ({e(plan["name"])})</h2>
+<dl><dt>Where</dt><dd>{e(ab["zone"])}</dd><dt>Data</dt><dd>{e(ab["data"])}</dd>
+<dt>Calls and texts</dt><dd>{e(ab["calls"])}</dd></dl>
+<p class="muted">Nothing to activate for these destinations: it works as soon as you arrive.</p></div>
+<div class="card"><h2>Other destinations</h2>{world_block}</div>
+<div class="card"><h2>Before you leave</h2><p>Check that "Data roaming" is turned on in your phone's settings.
+Your line keeps the same number abroad.</p></div>""", a, "abroad")
 
 
 def p_changer(a: dict) -> str:
@@ -657,6 +700,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.store.save()
                 return self._send(invoice_pdf(a, inv), 200, "application/pdf", {
                     "Content-Disposition": f'attachment; filename="Bill_FreeMobile_{inv["id"]}.pdf"'})
+            if path == "/account/international":
+                return self._page(p_abroad(a))
             if path == "/account/conso":
                 return self._page(p_conso(a))
             if path == "/account/infos":
