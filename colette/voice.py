@@ -171,8 +171,8 @@ def _echo_score(heard: str, said: str) -> float:
 
 # Gladia invente parfois des phrases sur le bruit ou le silence (« Please be positive. », « I love you. »).
 # Elles ont une confiance basse : on les jette. Courtes = seuil plus haut (« yes », « stop » réels sont nets).
-MIN_CONF = float(os.getenv("COLETTE_MIN_CONFIDENCE", "0.5"))
-MIN_CONF_SHORT = float(os.getenv("COLETTE_MIN_CONFIDENCE_SHORT", "0.65"))
+MIN_CONF = float(os.getenv("COLETTE_MIN_CONFIDENCE", "0.3"))
+MIN_CONF_SHORT = float(os.getenv("COLETTE_MIN_CONFIDENCE_SHORT", "0.35"))
 
 
 def _confidence(frame) -> Optional[float]:
@@ -412,7 +412,7 @@ class VoiceGate(FrameProcessor):
                     logger.info("🔇 Phrase inventée par le STT (confiance {:.2f}) ignorée : {!r}", conf, frame.text)
                     return
                 if conf is not None:
-                    logger.debug("STT confiance {:.2f} : {!r}", conf, frame.text)
+                    logger.info("🎙️  STT confiance {:.2f} : {!r}", conf, frame.text)
             if isinstance(frame, (TranscriptionFrame, InterimTranscriptionFrame)) and self.voice.command_window() \
                     and not self.voice.mic_open():
                 # Colette parle : on n'écoute que « arrêtez / taisez-vous / quittez l'appel ».
@@ -663,9 +663,9 @@ class ColetteVoice:
                 # Partielles : servent SEULEMENT à couper Colette sur « non / attendez / stop… ». Jamais
                 # affichées : sur le bruit de fond, Gladia invente des débuts de phrase (« On tire ! »).
                 messages_config=MessagesConfig(receive_partial_transcripts=True),
-                # détection de parole plus stricte : moins de phrases inventées sur le bruit de fond
-                pre_processing=PreProcessingConfig(
-                    speech_threshold=float(os.getenv("COLETTE_SPEECH_THRESHOLD", "0.75"))),
+                # détection de parole Gladia : réglage d'origine (0,75 était trop strict : plus rien d'entendu)
+                **({"pre_processing": PreProcessingConfig(speech_threshold=float(os.environ["COLETTE_SPEECH_THRESHOLD"]))}
+                   if os.getenv("COLETTE_SPEECH_THRESHOLD") else {}),
             ),
         )
         llm = OpenRouterLLMService(
