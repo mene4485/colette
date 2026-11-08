@@ -90,6 +90,10 @@ ADVISOR_TEXT = ("You can call Free Mobile customer service on three, two, four, 
                 "from your Free phone. I'm still here if you need me.")
 
 _URL_RE = re.compile(r"https?://\S+")
+# Narration sur la connexion : dite une seule fois par démarche (« I'm logging in » ×2 sinon).
+_LOGIN_RE = re.compile(r"\b(log(ging)?\s*(you\s+)?in|login|sign(ing)?\s*in|connect|password|identifier|credentials)\b", re.I)
+INTRO = ("Don't worry, I'm here with you and I'll take the lead. "
+         "I'll guide you through each step, and you can say stop at any time.")
 
 
 def _lower_first(text: str) -> str:
@@ -458,6 +462,8 @@ class ColetteVoice:
         self._plan_announced = False  # H a appelé annoncer_etapes → la narration n'ajoute plus d'étapes
         self._fixed_plan = False  # plan tiré du skill, affiché dès le début : annoncer_etapes de H ignoré
         self._announced_steps: set[int] = {0}  # étapes déjà annoncées « Maintenant, je vais… »
+        self._login_said = False
+        self._intro_said = False
         self._confirmations: list[tuple[str, bool]] = []  # confirm_change de cette démarche (résumé, oui ?)
         self._correction = ""  # « non, je veux l'autre » : renvoyé à H comme consigne, pas comme refus
         self.session_url = ""  # mode en ligne : session de la personne (claim) sur sa page actuelle
@@ -807,6 +813,9 @@ class ColetteVoice:
         self._plan_announced = False
         self._fixed_plan = False
         self._announced_steps: set[int] = {0}  # la 1re étape est dite avec le plan
+        self._login_said = False  # une phrase sur la connexion a déjà été dite
+        self._intro_said = False
+        self.narrator.reset()
         self._confirmations = []
         self._approved = False
         self._last_objectif = objectif
@@ -835,6 +844,9 @@ class ColetteVoice:
                 goal += ("\nThe person only wants to CHECK some information: change nothing, do not "
                          "click any \"Edit\", \"Save\" or \"Confirm\" button. Find the information, read "
                          "it and give it in your final answer.\n")
+            if not plan:  # pas de plan connu d'avance : on rassure quand même tout de suite
+                self._intro_said = True
+                self._spawn_say(INTRO)
             if plan:  # toutes les étapes connues dès le début, affichées et lues une fois
                 skill, labels = plan
                 logger.info("📋 Plan du skill {} : {}", skill, labels)
@@ -931,9 +943,14 @@ class ColetteVoice:
         todo = labels[:-1] if validate else labels
         nums = ("one", "two", "three", "four", "five", "six", "seven", "eight")
         spoken = " ; ".join(f"{nums[i] if i < len(nums) else i + 1}, {_lower_first(l)}" for i, l in enumerate(todo))
-        text = f"Here is what I will do: {spoken}."
+        text = f"Here is what we'll do together: {spoken}."
         if validate:
             text += " And I will ask for your approval before confirming anything."
+        if not self._intro_said:
+            self._intro_said = True
+            text = f"{INTRO} {text}"
+        for l in labels:
+            self.narrator.remember(l)
         logger.info("📋 Plan lu : {}", text)
         self._last_narration = time.monotonic() + 3.0  # pas de narration par-dessus le plan
         await self.say(text)
@@ -956,7 +973,11 @@ class ColetteVoice:
         if label == VALIDATE_STEP:
             return ""  # la carte d'accord s'en charge
         self._announced_steps.add(idx)
-        return f"Now I will {_lower_first(label)}."
+        if _LOGIN_RE.search(label):
+            self._login_said = True
+        nums = ("one", "two", "three", "four", "five", "six", "seven", "eight")
+        n = nums[idx] if idx < len(nums) else str(idx + 1)
+        return f"Step {n}: now I will {_lower_first(label)}."
 
     def _spawn_say(self, text: str) -> None:
         if not text or self._stopped or self.paused:
@@ -1115,6 +1136,11 @@ class ColetteVoice:
                 if not text:
                     continue  # action technique, ou phrase déjà dite
                 text = _URL_RE.sub("la page", text).strip()
+                if _LOGIN_RE.search(text):
+                    if self._login_said:
+                        logger.info("💬 (jetée : connexion déjà dite) {}", text)
+                        continue
+                    self._login_said = True
                 if not self._plan_announced:  # sans plan annoncé : étapes tirées de la narration
                     self.state.add_step(text[:80])
                 age = time.monotonic() - received
@@ -1155,6 +1181,7 @@ class ColetteVoice:
         if login_idx is not None and answer != "(no answer)":
             self.state.complete_through(login_idx + 1)
             nxt = self._step_announcement(login_idx + 1)
+            self._login_said = True
             done = "Thank you, I'm logging you in. " if site.is_demo() else "Thank you, you're logged in. "
             self._spawn_say((done + nxt).strip())
         elif answer != "(no answer)":

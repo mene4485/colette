@@ -11,12 +11,28 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from typing import Optional
 
 from loguru import logger
 from openai import AsyncOpenAI
 
 from colette.h_agent import Step
+
+_STOP = {"i", "i'm", "im", "am", "is", "the", "a", "an", "your", "you", "to", "of", "on", "in", "now",
+         "will", "my", "for", "and", "it", "this", "that", "page", "please", "just", "let", "me", "i'll"}
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z']+", text.lower()) if w not in _STOP}
+
+
+def similar(a: str, b: str, threshold: float = 0.5) -> bool:
+    """Même idée dite deux fois (« I'm logging in » / « I'm logging you in now »)."""
+    wa, wb = _words(a), _words(b)
+    if not wa or not wb:
+        return False
+    return len(wa & wb) / len(wa | wb) >= threshold
 
 # Actions jamais racontées : sans intérêt pour la personne.
 NOISE_TOOLS = {
@@ -84,10 +100,19 @@ class Narrator:
         else:
             phrase = await self._rewrite(action)
             self._cache[action] = phrase
-        if not phrase or phrase in self._said[-3:]:
-            return None  # rien à dire, ou déjà dit à l'instant
+        if not phrase or any(similar(phrase, said) for said in self._said):
+            return None  # rien à dire, ou même idée déjà dite pendant cette démarche
         self._said.append(phrase)
         return phrase
+
+    def reset(self) -> None:
+        """Nouvelle démarche : on oublie ce qui a été dit."""
+        self._said.clear()
+
+    def remember(self, phrase: str) -> None:
+        """Phrase dite par Colette hors narration (plan, « Maintenant je vais… ») : pas de redite."""
+        if phrase:
+            self._said.append(phrase)
 
     async def _rewrite(self, action: str) -> Optional[str]:
         try:

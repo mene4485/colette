@@ -65,7 +65,7 @@
     "border-radius:12px;overflow:hidden;border:4px solid transparent;border-image:linear-gradient(90deg,#4F6BFF,#B66CE0 50%,#4F6BFF) 1}",
     ".livebox img{max-width:100%;max-height:100%;object-fit:contain;background:#fff;display:block}",
     ".livecur{position:absolute;width:36px;height:36px;border:3px solid #fff;border-radius:50%;background:rgba(33,85,211,.55);",
-    "box-shadow:0 0 0 4px rgba(33,85,211,.5);display:none;transition:left .4s,top .4s}",
+    "box-shadow:0 0 0 4px rgba(33,85,211,.5);display:none}",
     ".livecur span{position:absolute;left:-4px;bottom:calc(100% + 8px);background:" + BLUE + ";color:#fff;font-size:15px;font-weight:700;",
     "padding:6px 12px;border-radius:8px;white-space:nowrap}",
     ".typebox{display:flex;gap:8px}.typebox input{flex:1;min-width:0;font:inherit;font-size:17px;padding:12px 14px;border:1.5px solid #D3D8E2;border-radius:12px}",
@@ -472,6 +472,7 @@
       liveEl.appendChild(bar);
       var box = el("div", "livebox");
       var img = el("img"); img.alt = "What Colette sees";
+      img.onload = placeCursor;  // curseur posé quand la capture est affichée, pas avant
       box.appendChild(img);
       var cur = el("div", "livecur"); cur.appendChild(el("span", null, "↓ I'm clicking here"));
       box.appendChild(cur);
@@ -482,9 +483,15 @@
     liveEl.style.display = show ? "flex" : "none";
     if (!show) return;
     var im = liveEl.querySelector("img");
-    if (im.getAttribute("src") !== shot.image) im.setAttribute("src", shot.image);
     liveEl.querySelector(".liveurl").textContent = shot.title || shot.url || "";
-    placeCursor();
+    if (im.getAttribute("src") !== shot.image) {
+      // nouvelle capture : on cache le curseur jusqu'à ce qu'elle soit affichée (onload), sinon il
+      // saute sur la nouvelle position par-dessus l'ancienne image
+      liveEl.querySelector(".livecur").style.display = "none";
+      im.setAttribute("src", shot.image);
+    } else {
+      placeCursor();
+    }
   }
 
   function placeCursor() {
