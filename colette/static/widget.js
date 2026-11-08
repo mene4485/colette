@@ -595,6 +595,15 @@
     if (!HOSTED || !url) return;
     var u;
     try { u = new URL(url); } catch (e) { return; }
+    // L'agent s'est déconnecté dans SON navigateur (Log out → /account/login sans paramètre) :
+    // on déconnecte aussi la page de la personne, sans rechargement (l'appel continue).
+    if (u.pathname === "/account/logout" || (u.pathname === "/account/login" && !u.search)) {
+      if (syncedPath !== "/account/logout" && /^\/account\/(?!log)/.test(location.pathname)) {
+        syncedPath = "/account/logout";
+        softGo(fetch("/account/logout", { credentials: "same-origin", cache: "no-store" }), "/account/login", false);
+      }
+      return;
+    }
     if (/^\/(colette|reset|favicon)|^\/account\/(login|logout)|\.pdf$/.test(u.pathname)) return;
     var q = new URLSearchParams(u.search); q.delete("agent"); q.delete("__path");
     var target = u.pathname + (q.toString() ? "?" + q.toString() : "");
