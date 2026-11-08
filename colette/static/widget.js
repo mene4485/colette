@@ -533,13 +533,20 @@
     }
     send({ type: "form_values", values: vals });
   }
+  // Fin de démarche : le compte est partagé avec l'agent (stocké sur le backend) → on recharge le contenu
+  // de sa page (sans recharger la bulle ni couper l'appel) pour qu'elle voie tout de suite ce qui a changé.
+  function refreshPage() {
+    if (!HOSTED || state.guide) return;
+    softGo(fetch(location.href, { credentials: "same-origin", cache: "no-store" }), location.href, false);
+  }
   function replayForm() {
-    if (!pendingForm) return;
+    if (!pendingForm) return false;
     var pf = pendingForm; pendingForm = null;
-    if (!state.outcome || state.outcome.kind !== "success") return;  // refusé / arrêté : rien n'est enregistré
+    if (!state.outcome || state.outcome.kind !== "success") return false;  // refusé / arrêté : rien n'est enregistré
     fetch(pf.action, { method: "POST", body: new URLSearchParams(pf.body), credentials: "same-origin" })
       .then(function (r) { return r.text().then(function (t) { swapPage(t, r.url, false); }); })
-      .catch(function () { /* ignore */ });
+      .catch(function () { refreshPage(); });
+    return true;
   }
 
   document.addEventListener("submit", function (ev) {
@@ -1330,7 +1337,7 @@
           if (HOSTED && state.login_check && state.login_check !== prev.login_check) tryHandoff(true);
           if (HOSTED && state.form_check && state.form_check !== prev.form_check) collectForm();
           if (HOSTED && state.form_handoff && !prev.form_handoff) focusForm();
-          if (HOSTED && prev.busy && !state.busy) replayForm();
+          if (HOSTED && prev.busy && !state.busy) setTimeout(function () { replayForm() || refreshPage(); }, 600);
           if (HOSTED && prev.busy && !state.busy) setTimeout(highlightDownload, 300);  // fin de démarche
           render();
         } else if (msg.type === "scan") {  // guide pas à pas : le backend lit la page de la personne
