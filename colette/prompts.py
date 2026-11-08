@@ -58,6 +58,9 @@ Task requested by the person: {objectif}
 3. Call etape_terminee(numero) at the end of each step (numbers start at 1).
 
 Start with {start_url} ({site_label}).
+Stay on this website ONLY: never open, search or visit any other website (no search engine, no other
+site, no new address typed in the address bar), even to look for information. If the information is
+not on this website, say so in your answer.
 {login}
 If there are several options to choose from (for example several plans), call ask_user with a short
 question that lists the options and their prices.

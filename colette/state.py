@@ -75,6 +75,8 @@ class StateServer:
         self.scanner: Optional[Callable[[], Awaitable[Optional[dict]]]] = None
         # Barrière fichiers (local) : url → l'agent a-t-il le droit d'ouvrir / télécharger ce fichier ?
         self.file_gate: Optional[Callable[[str], Awaitable[bool]]] = None
+        # Barrière sites (local) : url → l'agent a-t-il le droit d'ouvrir cette page ?
+        self.nav_gate: Optional[Callable[[str], bool]] = None
 
     # ---- cycle de vie -------------------------------------------------------
     async def start(self) -> None:

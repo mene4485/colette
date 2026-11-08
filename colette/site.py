@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 HERE = Path(__file__).parent
 
@@ -61,3 +62,19 @@ def login_instructions() -> str:
 
 def skills_dir() -> Path:
     return HERE / ("skills_demo" if is_demo() else "skills")
+
+
+def allowed_hosts() -> list[str]:
+    """Sites où l'agent a le droit d'aller : celui de la démo, rien d'autre."""
+    host = (urlparse(start_url()).hostname or "").lower()
+    if is_demo():
+        return [host] if host else []
+    return ["free.fr"]  # vrai site : mobile.free.fr et ses pages d'aide (*.free.fr)
+
+
+def allowed_url(url: str) -> bool:
+    u = urlparse(url or "")
+    if u.scheme in ("", "about", "data", "blob", "chrome", "chrome-error", "devtools"):
+        return True
+    host = (u.hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in allowed_hosts())

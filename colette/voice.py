@@ -593,7 +593,8 @@ class ColetteVoice:
         # Repli : quand l'agent H ne peut pas agir (quota plein) ou échoue, Colette guide la personne
         # pas à pas sur SA page (LLM OpenRouter) — elle clique elle-même.
         self.guide: Optional[ManualGuide] = ManualGuide(state, say=self.say) if state.can_scan else None
-        state.file_gate = self.approve_file  # local : Chrome bloque tout fichier tant qu'elle n'a pas dit oui
+        state.file_gate = self.approve_file
+        state.nav_gate = self.allow_nav  # local : Chrome refuse tout autre site pendant une démarche  # local : Chrome bloque tout fichier tant qu'elle n'a pas dit oui
         self._file_ok_until = 0.0
         self._file_lock = asyncio.Lock()
         state.on_client_message(self.on_client_message)
@@ -983,6 +984,7 @@ class ColetteVoice:
         self._plan_announced = False
         self._fixed_plan = False
         self._announced_steps: set[int] = {0}  # la 1re étape est dite avec le plan
+        self._offsite = False
         self._login_said = False  # une phrase sur la connexion a déjà été dite
         self._intro_said = getattr(self, "_skip_intro", False)  # après un changement d'avis : pas d'intro bis
         self._skip_intro = False
@@ -1079,7 +1081,9 @@ class ColetteVoice:
             self.state.update(busy=False)
             raise
         except Exception as e:
-            if self._stopped or getattr(self.runner, "status", None) == "interrupted":
+            if getattr(self, "_offsite", False):
+                result, speak = {"statut": "failed: the agent tried to leave the website, it was stopped"}, False
+            elif self._stopped or getattr(self.runner, "status", None) == "interrupted":
                 result, speak = {"statut": "stopped by the person"}, False
             else:
                 busy = _QUOTA_RE.search(f"{e} {type(e).__name__}") or str(e) == "H quota full"
@@ -1144,6 +1148,23 @@ class ColetteVoice:
                            "run_demarche again as usual.")
         logger.info("🛠️  run_demarche → {}", result)
         await params.result_callback(result, properties=FunctionCallResultProperties(run_llm=False))
+
+    def allow_nav(self, url: str) -> bool:
+        """Barrière navigateur (local) : pendant une démarche, seul le site de la démo est autorisé."""
+        if not self.working or self.guiding or site.allowed_url(url):
+            return True
+        logger.warning("🚫 Navigation hors du site bloquée : {}", url[:120])
+        return False
+
+    async def _stop_offsite(self) -> None:
+        self._stopped = True
+        self.gate.cancel_pending()
+        self.state.resolve_confirm(False)
+        await self._hush()
+        try:
+            await self.runner.cancel()
+        except Exception as e:
+            logger.warning("Annulation H (hors site) : {}", e)
 
     async def redirect(self, text: str) -> None:
         """« Non, en fait je veux autre chose » : arrête la démarche en cours, puis repart sur la nouvelle."""
@@ -1478,6 +1499,12 @@ class ColetteVoice:
 
     def _on_step(self, step: Step) -> None:
         """Rend la main tout de suite : la narration tourne à côté (« dernier gagnant »)."""
+        if step.kind == "page" and step.url and not site.allowed_url(step.url) and self.working and not self._stopped:
+            # l'agent a quitté le site de la démo : on arrête tout de suite (mode en ligne, navigateur cloud)
+            logger.warning("🚫 L'agent est allé hors du site : {} → démarche arrêtée", step.url)
+            self._offsite = True
+            asyncio.create_task(self._stop_offsite())
+            return
         if step.kind != "step":
             logger.debug("[{}] {}", step.kind, step.text)
             return

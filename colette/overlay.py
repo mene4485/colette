@@ -216,6 +216,19 @@ class OverlayInjector:
     async def _on_paused(self, session_id: Optional[str], params: dict) -> None:
         rid = params.get("requestId")
         allow = True
+        url = (params.get("request") or {}).get("url", "")
+        if "responseStatusCode" not in params and "responseErrorReason" not in params:  # étape requête
+            if params.get("resourceType") == "Document" and self.state is not None and self.state.nav_gate is not None:
+                allow = bool(self.state.nav_gate(url))
+            try:
+                if allow:
+                    await self.send("Fetch.continueRequest", {"requestId": rid}, session_id=session_id, timeout=5.0)
+                else:
+                    await self.send("Fetch.failRequest", {"requestId": rid, "errorReason": "BlockedByClient"},
+                                    session_id=session_id, timeout=5.0)
+            except Exception as e:
+                logger.debug("Fetch : requête {} déjà partie ({})", rid, e)
+            return
         if self._is_file(params) and self.state is not None and self.state.file_gate is not None:
             url = (params.get("request") or {}).get("url", "")
             try:
@@ -286,6 +299,7 @@ class OverlayInjector:
             # Barrière fichiers : toute page / requête qui renvoie un fichier (PDF, facture, pièce jointe)
             # est mise en pause par Chrome ; elle ne passe qu'après l'accord oral de la personne.
             await self.send("Fetch.enable", {"patterns": [
+                {"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"},  # autre site ?
                 {"urlPattern": "*", "resourceType": "Document", "requestStage": "Response"},
                 {"urlPattern": "*invoice*", "requestStage": "Response"},
                 {"urlPattern": "*facture*", "requestStage": "Response"},
