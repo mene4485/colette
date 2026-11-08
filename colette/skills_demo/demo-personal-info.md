@@ -34,3 +34,11 @@ Never invent a value.
 ## Never
 - Never change the holder name, the password, the plan or the options.
 - Never click "Save changes" before `confirm_change` replied "Approved".
+
+## Always ask the person first (every task)
+- Before ANY action that cannot be undone, call `confirm_change` with a short English summary of what
+  will happen, and act only if the reply starts with "Approved". This includes: downloading or opening
+  a file (bill, PDF), saving, validating, confirming, sending, submitting a form, paying, ordering,
+  subscribing, cancelling, deleting, changing a setting or a plan.
+- One `confirm_change` per action. If the person says no, do not do it: stop and say nothing was done.
+- Reading, opening a menu, going to a page or closing a cookie banner are not irreversible: no need to ask.

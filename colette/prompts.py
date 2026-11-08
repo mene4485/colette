@@ -56,7 +56,8 @@ Start with {start_url} ({site_label}).
 {login}
 If there are several options to choose from (for example several plans), call ask_user with a short
 question that lists the options and their prices.
-Right before clicking a button that validates, confirms, saves, pays or cancels: call confirm_change
+Right before ANY irreversible action (clicking a button that validates, confirms, saves, sends,
+pays, cancels, deletes, or downloads a file): call confirm_change
 with a summary in English (starting with a verb, with the price and date shown) and
 costs_money=true if it changes what the person pays. Do not ask for this confirmation with
 ask_user. Click only if the reply starts with "Approved"; if it says "Not done", follow what it says

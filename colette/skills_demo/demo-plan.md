@@ -35,3 +35,11 @@ order: 2
 - Never pick a plan yourself: the person chooses.
 - Never click "Confirm plan change" before `confirm_change` replied "Approved".
 - Never change options, personal details, or click "Reset the demo".
+
+## Always ask the person first (every task)
+- Before ANY action that cannot be undone, call `confirm_change` with a short English summary of what
+  will happen, and act only if the reply starts with "Approved". This includes: downloading or opening
+  a file (bill, PDF), saving, validating, confirming, sending, submitting a form, paying, ordering,
+  subscribing, cancelling, deleting, changing a setting or a plan.
+- One `confirm_change` per action. If the person says no, do not do it: stop and say nothing was done.
+- Reading, opening a menu, going to a page or closing a cookie banner are not irreversible: no need to ask.
