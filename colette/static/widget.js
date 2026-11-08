@@ -234,8 +234,35 @@
 
   function hasBinding() { return typeof window.__coletteSend === "function"; }
 
+  // Mode en ligne : la bulle ne se connecte au backend qu'au premier geste (ouvrir, appeler, écrire).
+  // Un onglet ouvert sans appel ne prend donc plus de place parmi les sessions du serveur.
+  var pendingMsgs = [], idleTimer = null, wantConn = !HOSTED;
+  function ensureConn(msg) {
+    wantConn = true;
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+    if (ws && ws.readyState === 1) return false;
+    if (/^(open|call|shortcut|text|resume|retry)$/.test(msg.type)) pendingMsgs.push(msg);
+    if (!ws) connect();
+    return true;  // message envoyé à la connexion
+  }
+  function scheduleIdleClose() {
+    // raccroché et rien en cours : on rend la session au serveur au bout d'une minute
+    if (!HOSTED) return;
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(function () {
+      idleTimer = null;
+      if (state.busy || state.call) return;
+      wantConn = false;
+      if (ws) { try { ws.close(); } catch (e) { /* ignore */ } }
+    }, 60000);
+  }
+
   function send(msg) {
-    if (HOSTED && /^(hangup|later)$/.test(msg.type)) stopAudio();  // raccrocher : micro rendu, son coupé
+    if (HOSTED && !hasBinding() && /^(open|call|shortcut|text|resume|retry)$/.test(msg.type) && ensureConn(msg)) {
+      if (/^(open|call|shortcut|resume)$/.test(msg.type)) startAudio();
+      return;
+    }
+    if (HOSTED && /^(hangup|later)$/.test(msg.type)) { stopAudio(); scheduleIdleClose(); }  // raccrocher : micro rendu, son coupé
     if (HOSTED && /^(open|call|shortcut|resume)$/.test(msg.type)) startAudio();  // geste de la personne
     if (HOSTED && /^(open|call|shortcut|text)$/.test(msg.type)) setTimeout(shareSession, 0);
     if (hasBinding()) window.__coletteSend(JSON.stringify(msg));
@@ -767,9 +794,9 @@
       foot.insertBefore(typeBox(), foot.firstChild);  // sans micro : on peut aussi écrire à Colette
       if (hadFocus) typeForm.firstChild.focus();
     }
-    if (!connected) body.appendChild(el("div", "off", busyServer
+    if (!connected && (wantConn || busyServer)) body.appendChild(el("div", "off", busyServer
       ? "Colette is already helping other people right now. Please try again in a few minutes."
-      : "Lost connection to Colette… trying again."));
+      : ws ? "Connecting to Colette…" : "Lost connection to Colette… trying again."));
     if (foot.childNodes.length) side.appendChild(foot);
   }
 
@@ -1071,6 +1098,8 @@
     ws.binaryType = "arraybuffer";
     ws.onopen = function () {
       connected = true; busyServer = false; render();
+      var queued = pendingMsgs; pendingMsgs = [];
+      for (var qi = 0; qi < queued.length; qi++) send(queued[qi]);
       if (restartCall) {
         restartCall = false;
         send({ type: "open" }); send({ type: "call" });
@@ -1093,7 +1122,8 @@
     };
     ws.onclose = function () {
       connected = false; ws = null; render();
-      setTimeout(connect, busyServer ? 15000 : restartCall ? 300 : (HOSTED ? 2000 : 1000));
+      if (!wantConn && !restartCall) return;  // session rendue volontairement : on se reconnectera au prochain geste
+      setTimeout(function () { if (!ws) connect(); }, busyServer ? 15000 : restartCall ? 300 : (HOSTED ? 2000 : 1000));
     };
     ws.onerror = function () { /* onclose suit */ };
   }
@@ -1125,7 +1155,7 @@
   function start() {
     build();
     if (hasBinding()) send({ type: "hello" });
-    else connect();
+    else if (!HOSTED) connect();  // en ligne : connexion au premier geste (ensureConn)
     setInterval(mount, 1000);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
