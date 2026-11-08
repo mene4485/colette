@@ -83,7 +83,7 @@ from colette.state import StateServer
 
 DEFAULT_LLM_MODEL = "google/gemini-2.5-flash"
 NARRATE_MIN_GAP_S = 5.0  # au plus une phrase de narration toutes les 5 s
-ECHO_TAIL_S = 0.4  # micro encore coupé juste après que Colette s'est tue
+ECHO_TAIL_S = 0.8  # micro encore coupé juste après que Colette s'est tue (0,4 : « Is that right? » réentendu)
 ASK_TIMEOUT_S = 180.0
 CONFIRM_TIMEOUT_S = 120.0  # sans réponse → on ne valide pas
 REMIND_GAP_S = 4.0  # « Dites simplement oui ou non. » au plus toutes les 4 s
@@ -119,9 +119,15 @@ def _confirm_card(action: str, costs_money: bool) -> dict:
             "yes": f"Yes, {verb}", "no": "No, don't change anything"}
 
 
+def _types_info(question: str) -> bool:
+    """L'agent lui demande de TAPER une information (adresse, e-mail, numéro…) au lieu de la dicter."""
+    norm = normalize(question or "")
+    return " type " in f" {norm} " and any(w in norm for w in ("yourself", "in the form", "text box", "on the page"))
+
+
 def _types_herself(question: str) -> bool:
-    """La personne tape elle-même ses identifiants (jamais à l'agent) et dit « c'est bon »."""
-    return is_login_question(question)
+    """La personne tape elle-même (identifiants, ou une information) et dit « c'est bon »."""
+    return is_login_question(question) or _types_info(question)
 
 
 def _asks_secret(question: str) -> bool:
@@ -161,6 +167,10 @@ def _is_redirect(text: str) -> bool:
 
 _BARGE_WORDS = re.compile(r"\b(non|attendez|attends|stop|arrete|arretez|pardon|excusez|minute|une seconde|taisez|"
                           r"no|wait|hold on|hang on|sorry|excuse me|one second|quiet|cancel)\b")
+
+
+# Formes interrogatives de Colette : la personne ne les dit pas, c'est son écho (« Is that right? »).
+_OWN_QUESTION = re.compile(r"^(is that|is it|isn t it|shall i|should i|say yes|yes or no|right\b)")
 
 
 def _echo_score(heard: str, said: str) -> float:
@@ -393,7 +403,7 @@ class VoiceGate(FrameProcessor):
                 # La personne tape ses identifiants : on attend « c'est bon » sans rien dire.
                 logger.info("🔇 Connexion en cours, ignoré : {!r}", text)
                 return True
-            if _types_herself(self._question) and self.voice.handoff:
+            if is_login_question(self._question) and self.voice.handoff:
                 # Mode en ligne : « c'est bon » → la bulle vérifie la connexion de SA page et envoie le jeton.
                 logger.info("🔑 « c'est bon » → vérification de la connexion sur la page")
                 self.voice.state.update(login_check=time.time())
@@ -600,14 +610,23 @@ class ColetteVoice:
     def is_echo(self, text: str) -> bool:
         """Sa propre voix captée par le micro (haut-parleurs, pas d'anti-écho sur notre son) :
         phrase d'au moins 4 mots faite surtout de mots que Colette dit / vient de dire."""
-        if len(normalize(text).split()) < 4:
-            return False  # « oui c'est ça », « non » : jamais filtrés
+        words = len(normalize(text).split())
         recent = self.bot_speaking or time.monotonic() - self.last_bot_stop < 8.0
-        if not recent:
+        if not recent or words == 0:
             return False
         said = [self.state.state.subtitle or ""] + [l["text"] for l in self.state.state.transcript[-3:]
                                                     if l.get("who") != "vous"]
-        return _echo_score(text, " ".join(x for x in said if x)) >= 0.7
+        score = _echo_score(text, " ".join(x for x in said if x))
+        if words < 4:
+            # Courte : « Is that right? » de Colette réentendu (« is that alright »). Un vrai « yes / no /
+            # stop / that's right » n'est jamais filtré ; le reste l'est s'il vient de ses mots, juste après elle.
+            just_now = self.bot_speaking or time.monotonic() - self.last_bot_stop < 3.0
+            if just_now and _OWN_QUESTION.match(normalize(text)):
+                return True  # « is that (al)right », « shall I confirm », « say yes or no » : sa propre question
+            if parse_intent(text, "confirm") in ("yes", "no", "stop", "hangup", "hush"):
+                return False
+            return just_now and score >= 0.6
+        return score >= 0.7
 
     def command_window(self) -> bool:
         """Colette parle (ou vient de se taire) : le micro reste ouvert mais seules les commandes
@@ -793,6 +812,10 @@ class ColetteVoice:
         if not text:
             return
         logger.info("⌨️  texte tapé ({} caractères)", len(text))
+        if self.gate.pending and _types_info(self.gate._question):  # réponse tapée = la valeur elle-même
+            self.state.add_line("vous", text)
+            self.gate.resolve(text)
+            return
         self.on_user_final(text)
         if self.gate.route(text):
             return
@@ -1492,14 +1515,19 @@ class ColetteVoice:
         if login_idx is not None:
             self.state.complete_through(login_idx)  # « Vous connecter » en cours
         fut = self.gate.expect_answer(question)
+        typing = not login and _types_info(question)
         if login and self.handoff:
             question = ("You need to log in. Type your ID and your password yourself on the page, "
                         "on the left. I can't see what you type.")
             self.state.update(login_handoff=True)
+        elif typing:  # saisie : jamais à l'oral (la dictée se coupe trop tôt et se trompe)
+            question = question.rstrip(" .") + "."
+            question += (" Type it in the text box on the right, then press Send."
+                         if self.handoff else " Take your time, and say \"done\" when you have finished.")
         self.state.update(status="listening", subtitle=question, heard="")
         await self.say(question)
         try:
-            answer = await asyncio.wait_for(fut, ASK_TIMEOUT_S if not login else ASK_TIMEOUT_S * 2)
+            answer = await asyncio.wait_for(fut, ASK_TIMEOUT_S * 2 if (login or typing) else ASK_TIMEOUT_S)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             answer = "(no answer)"
         finally:

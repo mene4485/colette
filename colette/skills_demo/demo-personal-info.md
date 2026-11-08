@@ -11,8 +11,7 @@ order: 3
 # See or change contact details — demo customer area
 
 If the person only wants to SEE a detail, open "My details", read it and answer. Change nothing.
-New values come from the task. If a piece is missing, ask only for it with `ask_user`, one short
-question at a time (number and street, then postcode, then city), keeping what was already said.
+The person TYPES the new values herself: never ask for them aloud, never type them from what she said.
 Never invent a value.
 
 ## Where
@@ -23,7 +22,12 @@ Never invent a value.
 ## Steps
 1. Open "My details" and write down the current value of the detail to change.
 2. Click "Edit my contact details".
-3. For each field to change: click it, select all its text and replace it with the new value. Check it.
+3. Click the first field to change (e.g. "Address (number and street)"), then call `ask_user` with exactly:
+   "Please type your new address yourself in the form, then say done." (say "email address" or
+   "contact phone" for those). Wait for her answer.
+   - If the answer is the new value itself (typed in the Colette box), select all the text of each field
+     to change and type the value. Check it.
+   - Otherwise ("done"), read the values now in the fields.
 4. Call `confirm_change` with a short English summary, e.g.
    "replace the address 12 rue des Lilas, 75020 Paris with 3 place de la République, 75003 Paris".
 5. Only if the reply starts with "Approved": click "Save changes".

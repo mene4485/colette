@@ -14,9 +14,9 @@ Only two details are covered: the contact email address and the postal address.
 If the person only wants to SEE their current details (voir, consulter, récupérer…), open
 "Mes infos personnelles", read the requested detail and give it in your answer. Change nothing,
 click no "Modifier" button.
-The new values come from the user's task. If a value is incomplete, ask only for the missing pieces
-with `ask_user`, one short question at a time, and keep what the person already said. Never invent or
-complete a value yourself.
+The person TYPES the new values herself in the form: never ask for them aloud, never type them from
+what she said. Click the field, then call `ask_user` with exactly "Please type your new <address / email
+address> yourself in the form, then say done." and read what she typed. Never invent or complete a value.
 
 ## Where
 - https://mobile.free.fr/account/ → "Mon compte" → "Mes infos personnelles"
@@ -27,7 +27,8 @@ complete a value yourself.
 
 ## Change the contact email
 1. Click "Modifier" next to "Mon adresse email".
-2. Type the new email address into the new-address field. Check it letter by letter.
+2. Click the new-address field and call `ask_user`: "Please type your new email address yourself in the
+   form, then say done." Then read the address she typed, letter by letter.
 3. When the page asks to confirm the password: call `ask_user` so the person types it
    herself, then wait.
 4. Call `confirm_change` with a short French summary such as:
@@ -38,8 +39,8 @@ complete a value yourself.
 
 ## Change the postal address
 1. In "Mon adresse postale", click "Modifier".
-2. If a piece of the new address is missing, ask for it with `ask_user`, one piece per question
-   (number and street name, then postal code, then city), keeping what the person already said.
+2. Click the "Code postal" field and call `ask_user`: "Please type your new address yourself in the
+   form, then say done." Help only if she asks. Then read every field she filled.
    Fill the form in its order: "Code postal" (type it), "Ville" (list), "Type de voie" (list: RUE,
    PLACE, AVENUE, BOULEVARD…), "Nom de voie" (long list written "NAME (TYPE)", e.g.
    "REPUBLIQUE (PLACE DE LA)"). Every list accepts typing: click it, type the first 3 letters

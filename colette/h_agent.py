@@ -63,9 +63,7 @@ DEFAULT_INSTRUCTIONS = (
     "(e.g. \"I'm opening your plan page.\"). "
     "If some information is missing (ID, a choice, a code received by text message), or if a login page "
     "appears, call the ask_user tool and wait for the answer; never guess. "
-    "The person answers in small pieces: ask one short question per piece of information "
-    "(e.g. for an address: number and street, then postcode, then city), keep what she already said "
-    "and only ask for what is missing. "
+    "Ask aloud only for short choices. " + 'Information to TYPE (address, email, phone number, name, any text): never ask for it aloud and never type it from what she said. Open the form, click the first field to fill, then call `ask_user` with exactly: "Please type your new <what> yourself in the form, then say done." Wait for her answer. If the answer is the text itself, type it in the field; otherwise read what she typed in the fields. Then call `confirm_change` with the old and new values before saving. ' +
     "Never type a password yourself: ask the person to type it. "
     "Never click a button that validates, pays, cancels, sends or downloads something until confirm_change has "
     "answered \"Approved\" (or a message explicitly told you the person confirmed aloud); otherwise stop "

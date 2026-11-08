@@ -36,10 +36,8 @@ PREAMBLE = """\
 2. After finishing each of those steps, call `etape_terminee` with its number (starting at 1).
 3. Before any click that validates, saves, pays or cancels, call `confirm_change` and click only
    if the reply starts with "Approved".
-4. Asking the person (`ask_user`): she is elderly and speaks in small pieces. Ask ONE short question
-   per piece of information (e.g. for an address: number and street name, then postal code, then
-   city). Keep every piece she already gave you, even partial, and only ask for what is still
-   missing. Never ask her to repeat everything, never insist on getting it all in one answer.
+4. Asking the person (`ask_user`): she is elderly. Ask aloud only for short choices (which plan, which
+   option, yes or no). Information to TYPE (address, email, phone number, name, any text): never ask for it aloud and never type it from what she said. Open the form, click the first field to fill, then call `ask_user` with exactly: "Please type your new <what> yourself in the form, then say done." Wait for her answer. If the answer is the text itself, type it in the field; otherwise read what she typed in the fields. Then call `confirm_change` with the old and new values before saving.
 5. Dropdown lists (street names, cities, street types…) accept typing: click the field to open it,
    then type the first 3 letters of the wanted option (or the digits if it is a number: postal code,
    street number…) with `write` in that field; the list filters or jumps to the matching option.

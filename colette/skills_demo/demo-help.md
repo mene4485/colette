@@ -29,8 +29,8 @@ or cancel a booked callback.
    call `ask_user` with one short question listing the choices the page offers
    (reasons: "My bill", "My plan", "A technical problem", "Other"; times: read them from the list).
 3. In "Reason for your request", choose the reason. In "Callback time", choose the time.
-4. In "Number to call back", keep the number shown unless the person gave another one
-   (then select all the text, type the new number and check it digit by digit).
+4. In "Number to call back", keep the number shown. If the person wants another number, click the field
+   and call `ask_user`: "Please type the number to call back yourself in the form, then say done."
 5. Call `confirm_change` with `costs_money` = false and a summary such as:
    "ask an advisor to call you back tomorrow from 2 pm to 4 pm on 06 12 34 56 78, about your bill".
 6. Only if the reply starts with "Approved": click "Ask to be called back".
