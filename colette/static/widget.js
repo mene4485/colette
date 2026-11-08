@@ -373,17 +373,61 @@
   // (pas de rechargement : l'appel continue), puis la bulle demande au site un jeton de session à usage
   // court et l'envoie au backend : l'agent ouvre /colette/claim?t=… et se retrouve connecté.
   // Colette (et l'agent H) ne voient jamais le mot de passe.
-  function swapPage(html, url) {
+  function swapPage(html, url, push) {
     var doc = new DOMParser().parseFromString(html, "text/html");
     var kids = Array.prototype.slice.call(document.body.childNodes);
     for (var i = 0; i < kids.length; i++) if (kids[i] !== host) document.body.removeChild(kids[i]);
     var nk = Array.prototype.slice.call(doc.body.childNodes);
     for (var j = 0; j < nk.length; j++) {
-      if (nk[j].tagName === "SCRIPT") continue;
+      if (nk[j].tagName === "SCRIPT") {
+        // scripts en ligne de la page (bannière cookies…) rejoués ; jamais widget.js (src) une 2e fois
+        if (!nk[j].src && !/COLETTE_BACKEND/.test(nk[j].textContent || "")) {
+          var sc = document.createElement("script"); sc.textContent = nk[j].textContent;
+          document.body.insertBefore(sc, host);
+        }
+        continue;
+      }
       document.body.insertBefore(document.importNode(nk[j], true), host);
     }
     if (doc.title) document.title = doc.title;
-    try { history.replaceState(null, "", url); } catch (e) { /* ignore */ }
+    try {
+      if (push && url !== location.href) history.pushState(null, "", url);
+      else history.replaceState(null, "", url);
+    } catch (e) { /* ignore */ }
+  }
+
+  // ---- navigation sans rechargement (mode en ligne) ----
+  // Recharger la page = nouvelle bulle = nouvelle session : l'appel s'arrêtait à chaque clic sur un
+  // onglet du site (« My plan », « Usage & bills »…). Les liens et formulaires du même site passent
+  // donc en fetch + remplacement du contenu ; la bulle, l'appel et la démarche ne bougent pas.
+  function softNavigable(u) {
+    return u.origin === location.origin &&
+      !/^\/(colette|reset|favicon)|^\/account\/logout|\.pdf$/.test(u.pathname);
+  }
+  function softGo(req, url, push) {
+    return req.then(function (r) {
+      var ct = r.headers.get("content-type") || "";
+      if (!/text\/html/.test(ct)) { location.href = url; return; }  // fichier, autre : vrai chargement
+      return r.text().then(function (t) {
+        swapPage(t, r.url, push);
+        if (push) window.scrollTo(0, 0);
+      });
+    }).catch(function () { location.href = url; });
+  }
+  if (HOSTED) {
+    document.addEventListener("click", function (ev) {
+      if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+      var a = ev.target && ev.target.closest ? ev.target.closest("a[href]") : null;
+      if (!a || (a.target && a.target !== "_self") || a.hasAttribute("download")) return;
+      var u; try { u = new URL(a.getAttribute("href"), location.href); } catch (e) { return; }
+      if (!softNavigable(u)) return;
+      if (u.pathname === location.pathname && u.search === location.search && u.hash) return;  // ancre
+      ev.preventDefault();
+      softGo(fetch(u.href, { credentials: "same-origin", cache: "no-store" }), u.href, true);
+    });
+    window.addEventListener("popstate", function () {
+      softGo(fetch(location.href, { credentials: "same-origin", cache: "no-store" }), location.href, false);
+    });
   }
 
   // Partage proactif : à chaque demande, le backend reçoit un lien de reprise de la session de la
@@ -428,6 +472,23 @@
       })
       .catch(function () { f.submit(); });
   }, true);
+
+  // Autres formulaires du site (modifier ses coordonnées, valider un forfait…) : même chose, sans
+  // rechargement. Le login garde son propre traitement ci-dessus (partage de session).
+  document.addEventListener("submit", function (ev) {
+    var f = ev.target;
+    if (!HOSTED || ev.defaultPrevented || !f || !f.action || /\/account\/login/.test(f.action)) return;
+    var u; try { u = new URL(f.action, location.href); } catch (e) { return; }
+    if (!softNavigable(u)) return;
+    ev.preventDefault();
+    var method = (f.method || "get").toUpperCase(), data = new URLSearchParams(new FormData(f));
+    if (method === "GET") {
+      u.search = data.toString();
+      softGo(fetch(u.href, { credentials: "same-origin", cache: "no-store" }), u.href, true);
+    } else {
+      softGo(fetch(u.href, { method: "POST", body: data, credentials: "same-origin" }), u.href, true);
+    }
+  });
 
   // ---- la page de la personne suit celle de l'agent (mode en ligne) ----
   // L'agent travaille dans son navigateur cloud ; à chaque nouvelle page, la page de la personne passe
