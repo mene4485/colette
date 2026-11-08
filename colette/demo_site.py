@@ -198,7 +198,7 @@ CSS = """
 *{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f2f2f2;color:#333;font-size:15px}
 a{color:#cd1e25}.demo{background:#f6f6f6;color:#9a9a9a;font-size:11px;text-align:center;padding:3px 8px}
 header{background:#cd1e25;color:#fff;display:flex;align-items:center;gap:18px;padding:0 24px;height:64px}
-.logo{font-size:34px;font-weight:900;letter-spacing:-1px;text-transform:lowercase}.logo small{font-size:14px;font-weight:400;letter-spacing:0;margin-left:6px}
+.logo-svg{height:34px;width:auto;display:block}.logo{font-size:34px;font-weight:900;letter-spacing:-1px;text-transform:lowercase}.logo small{font-size:14px;font-weight:400;letter-spacing:0;margin-left:6px}
 header .space{font-size:15px;opacity:.95;border-left:1px solid rgba(255,255,255,.5);padding-left:18px}
 header .user{margin-left:auto;font-size:13px;text-align:right}header .user a{color:#fff}
 .wrap{display:flex;max-width:1180px;margin:0 auto;padding:20px;gap:20px;align-items:flex-start}
@@ -228,6 +228,9 @@ dl{display:grid;grid-template-columns:200px 1fr;gap:8px 16px;margin:0}dt{color:#
 display:flex;gap:16px;align-items:center;flex-wrap:wrap;z-index:1000;font-size:13px}#cookies p{flex:1;min-width:260px;margin:0}
 footer{text-align:center;color:#999;font-size:12px;padding:20px}
 """
+
+# Logo Free Mobile (Wikimedia Commons, « Logo_Free_Mobile.svg »), recoloré en blanc pour le bandeau rouge.
+FREE_LOGO = (Path(__file__).resolve().parent / "free_logo.svg").read_text(encoding="utf-8").strip()
 
 COOKIE_BANNER = """
 <div id="cookies"><p><b>Your cookie choices.</b> We use cookies to improve your
@@ -261,7 +264,7 @@ def page(title: str, body: str, account: Optional[dict] = None, active: str = ""
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} - Free Mobile (mock-up)</title>
 <style>{CSS}</style></head><body>
 <div class="demo">Demo mock-up for Colette · not affiliated with Free · fictitious account</div>
-<header><span class="logo">free<small>mobile</small></span><span class="space">Customer Area</span>{user}</header>
+<header><span class="logo">{FREE_LOGO}</span><span class="space">Customer Area</span>{user}</header>
 {content}<footer>Colette mock-up · Hackathon H Company × 42AI · <a href="/reset">Reset the demo</a></footer>
 {COOKIE_BANNER if banner else ""}</body></html>"""
 
