@@ -132,6 +132,8 @@ class OverlayInjector:
             elif method == "Target.targetDestroyed":
                 self._attached.pop(params.get("targetId"), None)
                 self._maybe_close()
+            elif method == "Fetch.requestPaused":
+                self._spawn(self._on_paused(msg.get("sessionId"), params))
             elif method == "Runtime.bindingCalled" and params.get("name") == BINDING:
                 self._on_binding(msg.get("sessionId"), params.get("payload") or "")
             elif method == "Target.detachedFromTarget":
@@ -201,6 +203,36 @@ class OverlayInjector:
         except Exception as e:  # onglet en pleine navigation : la page renverra « hello »
             logger.debug("Push d'état impossible ({}) : {}", session_id[:8], e)
 
+    # ---- barrière fichiers (téléchargement / ouverture d'un PDF) ---------------------
+    @staticmethod
+    def _is_file(params: dict) -> bool:
+        headers = {h.get("name", "").lower(): h.get("value", "") for h in params.get("responseHeaders") or []}
+        ctype = headers.get("content-type", "").lower()
+        disp = headers.get("content-disposition", "").lower()
+        url = (params.get("request") or {}).get("url", "").lower()
+        return ("attachment" in disp or "application/pdf" in ctype or "application/octet-stream" in ctype
+                or url.split("?")[0].endswith(".pdf"))
+
+    async def _on_paused(self, session_id: Optional[str], params: dict) -> None:
+        rid = params.get("requestId")
+        allow = True
+        if self._is_file(params) and self.state is not None and self.state.file_gate is not None:
+            url = (params.get("request") or {}).get("url", "")
+            try:
+                allow = bool(await self.state.file_gate(url))
+            except Exception as e:
+                logger.warning("Barrière fichiers en échec ({}) → bloqué", e)
+                allow = False
+        try:
+            if allow:
+                await self.send("Fetch.continueRequest", {"requestId": rid}, session_id=session_id, timeout=5.0)
+            else:
+                logger.info("🛑 Fichier bloqué (pas d'accord) : {}", (params.get("request") or {}).get("url", "")[:120])
+                await self.send("Fetch.failRequest", {"requestId": rid, "errorReason": "BlockedByClient"},
+                                session_id=session_id, timeout=5.0)
+        except Exception as e:
+            logger.debug("Fetch : requête {} déjà partie ({})", rid, e)
+
     # ---- évaluation dans l'onglet de la personne (guide pas à pas) ---------------
     async def _eval(self, session_id: str, expr: str, timeout: float = 5.0):
         res = await self.send("Runtime.evaluate", {"expression": expr, "returnByValue": True},
@@ -251,6 +283,15 @@ class OverlayInjector:
             await self.send("Page.setBypassCSP", {"enabled": True}, session_id=sid)
             await self.send("Runtime.enable", session_id=sid)
             await self.send("Runtime.addBinding", {"name": BINDING}, session_id=sid)
+            # Barrière fichiers : toute page / requête qui renvoie un fichier (PDF, facture, pièce jointe)
+            # est mise en pause par Chrome ; elle ne passe qu'après l'accord oral de la personne.
+            await self.send("Fetch.enable", {"patterns": [
+                {"urlPattern": "*", "resourceType": "Document", "requestStage": "Response"},
+                {"urlPattern": "*invoice*", "requestStage": "Response"},
+                {"urlPattern": "*facture*", "requestStage": "Response"},
+                {"urlPattern": "*.pdf*", "requestStage": "Response"},
+                {"urlPattern": "*download*", "requestStage": "Response"},
+            ]}, session_id=sid)
             await self.send("Page.addScriptToEvaluateOnNewDocument", {"source": script}, session_id=sid)
             await self.send("Runtime.evaluate", {"expression": script, "awaitPromise": False}, session_id=sid)
             if self.state is not None:  # page déjà ouverte (bulle déjà là) : état courant

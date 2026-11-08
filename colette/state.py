@@ -70,6 +70,8 @@ class StateServer:
         self._server = None
         # Lecture de la page de la personne pour le guide pas à pas (local : branché par l'overlay CDP).
         self.scanner: Optional[Callable[[], Awaitable[Optional[dict]]]] = None
+        # Barrière fichiers (local) : url → l'agent a-t-il le droit d'ouvrir / télécharger ce fichier ?
+        self.file_gate: Optional[Callable[[str], Awaitable[bool]]] = None
 
     # ---- cycle de vie -------------------------------------------------------
     async def start(self) -> None:

@@ -575,6 +575,9 @@ class ColetteVoice:
         # Repli : quand l'agent H ne peut pas agir (quota plein) ou échoue, Colette guide la personne
         # pas à pas sur SA page (LLM OpenRouter) — elle clique elle-même.
         self.guide: Optional[ManualGuide] = ManualGuide(state, say=self.say) if state.can_scan else None
+        state.file_gate = self.approve_file  # local : Chrome bloque tout fichier tant qu'elle n'a pas dit oui
+        self._file_ok_until = 0.0
+        self._file_lock = asyncio.Lock()
         state.on_client_message(self.on_client_message)
         state.update(shortcuts=list_shortcuts())
 
@@ -1111,6 +1114,22 @@ class ColetteVoice:
         except Exception as e:
             logger.warning("Annulation H (nouvelle demande) : {}", e)
 
+    async def approve_file(self, url: str) -> bool:
+        """Barrière navigateur : l'agent veut ouvrir / télécharger un fichier. Oui explicite obligatoire."""
+        if not self.working or self.guiding:
+            return True  # la personne clique elle-même (pas de démarche, ou guide pas à pas)
+        async with self._file_lock:  # plusieurs requêtes pour le même fichier : une seule question
+            if time.monotonic() < self._file_ok_until:
+                return True
+            if self._stopped:
+                return False
+            logger.info("🛑 L'agent veut un fichier : {} → accord demandé", url[:120])
+            self._narrated_seq = self._step_seq
+            ok = await self._confirm("download this file (your document) to your computer")
+            if ok:
+                self._file_ok_until = time.monotonic() + 90.0
+            return ok and not self._stopped
+
     @property
     def guiding(self) -> bool:
         return self.guide is not None and self.guide.active
@@ -1277,6 +1296,8 @@ class ColetteVoice:
                     "button of exactly what she asked for (e.g. \"Choose this plan\" in that plan's section), "
                     "then call confirm_change again with the new summary.")
         self._confirmations.append((summary, ok))
+        if ok and re.search(r"download|pdf|file|bill|invoice|t[ée]l[ée]charg|facture", summary or "", re.I):
+            self._file_ok_until = time.monotonic() + 90.0  # accord déjà donné pour ce téléchargement
         return ok and not self._stopped
 
     async def _approve(self, action: str, *, costs_money: bool = False) -> bool:
