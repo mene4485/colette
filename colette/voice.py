@@ -171,8 +171,8 @@ def _echo_score(heard: str, said: str) -> float:
 
 # Gladia invente parfois des phrases sur le bruit ou le silence (« Please be positive. », « I love you. »).
 # Elles ont une confiance basse : on les jette. Courtes = seuil plus haut (« yes », « stop » réels sont nets).
-MIN_CONF = float(os.getenv("COLETTE_MIN_CONFIDENCE", "0.3"))
-MIN_CONF_SHORT = float(os.getenv("COLETTE_MIN_CONFIDENCE_SHORT", "0.35"))
+MIN_CONF = float(os.getenv("COLETTE_MIN_CONFIDENCE", "0.1"))
+MIN_CONF_SHORT = float(os.getenv("COLETTE_MIN_CONFIDENCE_SHORT", "0.1"))
 
 
 def _confidence(frame) -> Optional[float]:
