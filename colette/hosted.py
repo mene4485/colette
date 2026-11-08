@@ -40,7 +40,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env")
 load_dotenv(_ROOT / "colette" / ".env")
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi import FastAPI, Header, Request, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import JSONResponse, PlainTextResponse  # noqa: E402
 from loguru import logger  # noqa: E402
 from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame  # noqa: E402
@@ -57,6 +57,47 @@ SCREEN_WIDTH = 1100  # captures réduites (JPEG) pour la bulle
 
 app = FastAPI(title="Colette backend")
 _active: set[str] = set()
+
+# ---- comptes de la maquette en ligne : partagés entre la page de la personne et le navigateur de l'agent ----
+# Vercel (serverless) n'a pas de disque : la maquette lit / écrit ici le compte (clé = id de compte du cookie).
+# En mémoire + copie JSON (best effort). Redémarrage du backend = comptes remis à zéro (comme « Reset the demo »).
+DEMO_STORE_KEY = os.getenv("COLETTE_DEMO_STORE_KEY", "colette-demo-store")
+_DEMO_FILE = Path(os.getenv("COLETTE_DEMO_STORE_FILE", "/tmp/colette_demo_accounts.json"))
+try:
+    _demo_accounts: dict[str, dict] = json.loads(_DEMO_FILE.read_text(encoding="utf-8"))
+except Exception:
+    _demo_accounts = {}
+
+
+def _demo_ok(aid: str, key: Optional[str]) -> bool:
+    return key == DEMO_STORE_KEY and 8 <= len(aid) <= 64 and aid.replace("-", "").isalnum()
+
+
+@app.get("/demo/account/{aid}")
+async def demo_account_get(aid: str, x_store_key: Optional[str] = Header(None)):
+    if not _demo_ok(aid, x_store_key):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    acct = _demo_accounts.get(aid)
+    return JSONResponse({"account": acct}) if acct is not None else JSONResponse({"error": "not_found"}, status_code=404)
+
+
+@app.put("/demo/account/{aid}")
+async def demo_account_put(aid: str, request: Request, x_store_key: Optional[str] = Header(None)):
+    if not _demo_ok(aid, x_store_key):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    body = await request.json()
+    acct = body.get("account") if isinstance(body, dict) else None
+    if not isinstance(acct, dict) or len(json.dumps(acct)) > 20000:
+        return JSONResponse({"error": "bad_account"}, status_code=400)
+    _demo_accounts[aid] = acct
+    if len(_demo_accounts) > 500:  # garde-fou mémoire
+        for old in list(_demo_accounts)[:100]:
+            _demo_accounts.pop(old, None)
+    try:
+        _DEMO_FILE.write_text(json.dumps(_demo_accounts, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+    return JSONResponse({"ok": True})
 
 
 def agent_start_url() -> str:

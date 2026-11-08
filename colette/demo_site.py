@@ -847,6 +847,7 @@ import os  # noqa: E402
 
 WIDGET_PATH = ROOT / "colette" / "static" / "widget.js"
 STATE_COOKIE = "fm_acct"
+ID_COOKIE = "fm_id"  # id du compte partagé (stocké sur le backend) : même id pour la personne et l'agent
 AGENT_COOKIE = "colette_agent"  # navigateur de l'agent H (cloud) : pas de bulle Colette dedans
 
 
@@ -857,7 +858,46 @@ class CookieStore:
         self.lock = threading.Lock()
         self.secret = os.getenv("COLETTE_DEMO_SECRET", "colette-demo-secret")
         self.dirty = False
-        self.data = {"account": self._load(cookies.get(STATE_COOKIE))}
+        self.new_id = False
+        # Avec un backend : compte stocké côté serveur, partagé entre la page de la personne et l'agent cloud.
+        self.backend = os.getenv("COLETTE_BACKEND_URL", "").strip().rstrip("/")
+        self.store_key = os.getenv("COLETTE_DEMO_STORE_KEY", "colette-demo-store")
+        self.aid = ""
+        if self.backend:
+            m = cookies.get(ID_COOKIE)
+            self.aid = m.value if m is not None and re.fullmatch(r"[a-f0-9]{16,32}", m.value or "") else ""
+            acct = self._remote_get() if self.aid else None
+            if acct is None and not self.aid:
+                self.aid, self.new_id = secrets.token_hex(12), True
+            if acct is None:  # pas encore stocké : on reprend l'ancien cookie s'il y en a un
+                acct = self._load(cookies.get(STATE_COOKIE))
+            self.data = {"account": {**copy.deepcopy(DEFAULT_ACCOUNT), **acct}}
+        else:
+            self.data = {"account": self._load(cookies.get(STATE_COOKIE))}
+
+    # ---- stockage partagé sur le backend (Railway) ----
+    def _remote(self, method: str, body: Optional[dict] = None):
+        import urllib.request
+        req = urllib.request.Request(f"{self.backend}/demo/account/{self.aid}", method=method,
+                                     headers={"x-store-key": self.store_key, "content-type": "application/json"},
+                                     data=json.dumps(body).encode() if body is not None else None)
+        with urllib.request.urlopen(req, timeout=4) as r:
+            return json.loads(r.read() or b"{}")
+
+    def _remote_get(self) -> Optional[dict]:
+        try:
+            acct = self._remote("GET").get("account")
+            return acct if isinstance(acct, dict) else None
+        except Exception:
+            return None
+
+    def adopt(self, aid: str) -> None:
+        """Navigateur de l'agent : reprend le compte de la personne (lien de reprise)."""
+        if re.fullmatch(r"[a-f0-9]{16,32}", aid or ""):
+            self.aid, self.new_id = aid, True
+            acct = self._remote_get()
+            if acct is not None:
+                self.data["account"] = {**copy.deepcopy(DEFAULT_ACCOUNT), **acct}
 
     def _sign(self, raw: bytes) -> str:
         return hmac.new(self.secret.encode(), raw, hashlib.sha256).hexdigest()[:32]
@@ -888,10 +928,15 @@ class CookieStore:
 
     def save(self) -> None:
         self.dirty = True
+        if self.backend and self.aid:
+            try:
+                self._remote("PUT", {"account": self.account})
+            except Exception as e:  # backend injoignable : le cookie garde au moins la copie locale
+                print(f"demo store PUT failed: {e}")
 
     def reset(self) -> None:
         self.data["account"] = copy.deepcopy(DEFAULT_ACCOUNT)
-        self.dirty = True
+        self.save()
 
     def cookie(self) -> str:
         raw = json.dumps(self.account, ensure_ascii=False, separators=(",", ":")).encode()
@@ -931,7 +976,10 @@ class CloudHandler(Handler):
             if not self._logged_in():
                 return self._send('{"error":"not_logged_in"}', 401, "application/json")
             exp = int(dt.datetime.now().timestamp()) + 300
-            tok = f"{exp}.{self.store._sign(f'claim:{exp}'.encode())[:20]}"
+            aid = getattr(self.store, "aid", "") or "0"
+            if aid != "0":
+                self.store.save()  # le compte est stocké sur le backend avant d'être partagé avec l'agent
+            tok = f"{exp}.{aid}.{self.store._sign(f'claim:{exp}:{aid}'.encode())[:20]}"
             return self._send(json.dumps({"token": tok}), 200, "application/json")
         if path == "/colette/claim":  # navigateur de l'agent : reprend la session de la personne
             qs = parse_qs(urlparse(self.path).query)
@@ -939,11 +987,14 @@ class CloudHandler(Handler):
             nxt = (qs.get("next") or ["/account/"])[0]
             if not nxt.startswith("/account") or "//" in nxt or nxt.startswith("/account/log"):
                 nxt = "/account/"
-            exp, _, sig = t.partition(".")
+            parts = t.split(".")
+            exp, aid, sig = (parts + ["", "", ""])[:3] if len(parts) == 3 else (parts[0], "0", parts[-1])
             ok = exp.isdigit() and int(exp) >= dt.datetime.now().timestamp() and \
-                hmac.compare_digest(sig, self.store._sign(f"claim:{exp}".encode())[:20])
+                hmac.compare_digest(sig, self.store._sign(f"claim:{exp}:{aid}".encode())[:20])
             if not ok:
                 return self._redirect("/account/login?agent=1")
+            if aid != "0":
+                self.store.adopt(aid)  # l'agent travaille sur LE compte de la personne
             sep = "&" if "?" in nxt else "?"
             return self._redirect(nxt + sep + "agent=1",
                                   f"fm_session={self.store.token()}; Path=/; HttpOnly; SameSite=Lax")
@@ -957,6 +1008,8 @@ class CloudHandler(Handler):
         store = getattr(self, "store", None)
         if isinstance(store, CookieStore) and store.dirty:
             self.send_header("Set-Cookie", store.cookie())
+        if isinstance(store, CookieStore) and store.new_id and store.aid:
+            self.send_header("Set-Cookie", f"{ID_COOKIE}={store.aid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400")
         if "agent=1" in (urlparse(self.path).query or ""):
             self.send_header("Set-Cookie", f"{AGENT_COOKIE}=1; Path=/; SameSite=Lax")
         super().end_headers()
