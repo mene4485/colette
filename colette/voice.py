@@ -962,6 +962,21 @@ class ColetteVoice:
         if steps and steps[-1]["label"] == VALIDATE_STEP:
             number = min(number, len(steps) - 1)  # « Valider » ne se coche qu'après le oui
         self.state.complete_through(number)
+        # H coche souvent plusieurs étapes d'un coup (déjà connecté : 1 puis 2 en 4 ms) : on n'annonce
+        # que la dernière, sinon Colette dit « now I will log in » alors que c'est déjà fait.
+        self._announce_target = number
+        task = asyncio.create_task(self._announce_later(number))
+        self.gate._tasks.add(task)
+        task.add_done_callback(self.gate._tasks.discard)
+
+    async def _announce_later(self, number: int) -> None:
+        await asyncio.sleep(0.6)
+        if getattr(self, "_announce_target", None) != number:
+            for i in range(number):  # étapes sautées : marquées comme annoncées
+                self._announced_steps.add(i)
+            return
+        for i in range(number):
+            self._announced_steps.add(i)
         self._spawn_say(self._step_announcement(number))
 
     def _step_announcement(self, idx: int) -> str:
