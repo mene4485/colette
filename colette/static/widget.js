@@ -660,10 +660,6 @@
     wrap.appendChild(side);
     var closeFn = function () { state.open = false; render(); send({ type: "close" }); };
 
-    var top = el("div", "top");
-    top.appendChild(el("span", null, "Colette"));
-    if (scr !== "working") { var tx = el("button"); tx.setAttribute("aria-label", "Close"); tx.appendChild(svg("x")); tx.onclick = closeFn; top.appendChild(tx); }
-    side.appendChild(top);
 
     var head = el("div", "head");
     head.appendChild(avatar());
@@ -718,19 +714,18 @@
 
   // ---- 02 · ouverte ----
   function home(body) {
-    body.appendChild(el("h2", null, "Hello, I'm Colette."));
-    body.appendChild(el("p", "lead", "I'll do it on the website for you, while we talk."));
+    body.appendChild(el("h2", null, "Hello!"));
+    body.appendChild(el("p", "lead", "I do it for you, while we talk."));
     var talk = el("button", "talk");
     var halo = el("span", "halo callh"), disc = el("span", "disc calld");
     disc.appendChild(svg("phone")); halo.appendChild(disc); talk.appendChild(halo);
     talk.appendChild(el("b", null, "Call Colette"));
-    talk.appendChild(el("small", null, "No waiting · just talk normally"));
     talk.onclick = function () { state.call = true; render(); send({ type: "call" }); };
     body.appendChild(talk);
     var shortcuts = state.shortcuts || [];
     if (shortcuts.length) {
       body.appendChild(el("div", "sep"));
-      body.appendChild(el("div", "or", "You can say, for example:"));
+      body.appendChild(el("div", "or", "For example:"));
       var ex = el("div", "ex");
       shortcuts.forEach(function (s) {
         var c = el("button", "exb", "\u201C" + (s.ask || s.label) + "\u201D");
@@ -779,9 +774,9 @@
 
   function guarantees() {
     var ul = el("ul", "guar");
-    [["lock", "You log in yourself. Colette never sees your password."],
-     ["shield", "Nothing is changed or paid without your \u201Cyes\u201D."],
-     ["mic", "Say \u201Cstop\u201D at any time and she stops."]].forEach(function (g) {
+    [["lock", "Never sees your password"],
+     ["shield", "Nothing changes without your \u201Cyes\u201D"],
+     ["mic", "Say \u201Cstop\u201D anytime"]].forEach(function (g) {
       var li = el("li"); li.appendChild(svg(g[0])); li.appendChild(el("span", null, g[1])); ul.appendChild(li);
     });
     return ul;
