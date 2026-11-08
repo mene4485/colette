@@ -24,7 +24,8 @@ or cancel a booked callback.
 
 ## Book a callback
 Three things are needed, asked ONE at a time with `ask_user` (short choices, said aloud), in this order.
-Never choose for her: if her request already gives one of them clearly, do not ask it again.
+Both lists start empty ("— Choose —"): never pick an option she did not give. If her request already
+gives one of them clearly, do not ask it again.
 1. Open "Help". If a box already says "An advisor will call you back on …", stop and answer with the
    booked time (one callback at a time; cancel it first if she wants another one).
 2. Reason. Read the four choices of "Reason for your request" and call `ask_user`, for example:

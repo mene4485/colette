@@ -565,11 +565,13 @@ def p_aide(a: dict, error: str = "", ok: bool = False, cancelled: bool = False) 
         form = ""
     else:
         callback = ""
-        reasons = "".join(f"<option>{e(r)}</option>" for r in CALLBACK_REASONS)
-        slots = "".join(f"<option>{e(s)}</option>" for s in callback_slots())
+        # rien de choisi par défaut : la personne (ou Colette, avec elle) doit choisir
+        blank = '<option value="" selected disabled>— Choose —</option>'
+        reasons = blank + "".join(f"<option>{e(r)}</option>" for r in CALLBACK_REASONS)
+        slots = blank + "".join(f"<option>{e(s)}</option>" for s in callback_slots())
         form = f"""<form method="post" action="/account/aide/rappel">
-<label for="reason">Reason for your request</label><select id="reason" name="reason">{reasons}</select>
-<label for="slot">Callback time</label><select id="slot" name="slot">{slots}</select>
+<label for="reason">Reason for your request</label><select id="reason" name="reason" required>{reasons}</select>
+<label for="slot">Callback time</label><select id="slot" name="slot" required>{slots}</select>
 <label for="phone">Number to call back</label><input type="text" id="phone" name="phone" value="{e(a["line"])}">
 <div class="actions"><button class="btn" type="submit">Ask to be called back</button></div></form>"""
     return page("Help", f"""<h1>Help</h1>{msg}
