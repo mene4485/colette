@@ -196,7 +196,7 @@ def invoice_pdf(account: dict, inv: dict) -> bytes:
 # ---- HTML -------------------------------------------------------------------------
 CSS = """
 *{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f2f2f2;color:#333;font-size:15px}
-a{color:#cd1e25}.demo{background:#fff8c5;color:#6b5900;font-size:12px;text-align:center;padding:4px 8px;border-bottom:1px solid #e6d77a}
+a{color:#cd1e25}.demo{background:#f6f6f6;color:#9a9a9a;font-size:11px;text-align:center;padding:3px 8px}
 header{background:#cd1e25;color:#fff;display:flex;align-items:center;gap:18px;padding:0 24px;height:64px}
 .logo{font-size:34px;font-weight:900;letter-spacing:-1px;text-transform:lowercase}.logo small{font-size:14px;font-weight:400;letter-spacing:0;margin-left:6px}
 header .space{font-size:15px;opacity:.95;border-left:1px solid rgba(255,255,255,.5);padding-left:18px}
@@ -260,7 +260,7 @@ def page(title: str, body: str, account: Optional[dict] = None, active: str = ""
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} - Free Mobile (mock-up)</title>
 <style>{CSS}</style></head><body>
-<div class="demo">Colette demo mock-up — not the official Free website. Fictitious account and data.</div>
+<div class="demo">Demo mock-up for Colette · not affiliated with Free · fictitious account</div>
 <header><span class="logo">free<small>mobile</small></span><span class="space">Customer Area</span>{user}</header>
 {content}<footer>Colette mock-up · Hackathon H Company × 42AI · <a href="/reset">Reset the demo</a></footer>
 {COOKIE_BANNER if banner else ""}</body></html>"""

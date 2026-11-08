@@ -32,6 +32,7 @@
 
   var BLUE = "#2155D3", INK = "#0F172A", MUTED = "#475569", LINE = "#E2E6EE";
   var GREEN = "#2E6B4A", AMBER = "#8A5A12", SOFT = "#F3F5F9";
+  var CALL = "#1E8E3E", RED = "#C62828";
 
   var CSS = [
     ":host{all:initial}",
@@ -112,9 +113,9 @@
     ".rowb svg{width:22px;height:22px;color:" + BLUE + ";flex:none}",
     /* 02 · ouverte */
     ".lead{margin-top:12px}",
-    ".talk{display:flex;flex-direction:column;align-items:center;margin-top:26px;background:none;border:none;width:100%}",
-    ".talk .halo{width:184px;height:184px;border-radius:50%;background:#EAF0FC;display:flex;align-items:center;justify-content:center}",
-    ".talk .disc{width:146px;height:146px;border-radius:50%;background:" + BLUE + ";color:#fff;display:flex;align-items:center;justify-content:center}",
+    ".talk{display:flex;flex-direction:column;align-items:center;margin-top:16px;background:none;border:none;width:100%}",
+    ".talk .halo{width:150px;height:150px;border-radius:50%;background:#EAF0FC;display:flex;align-items:center;justify-content:center}",
+    ".talk .disc{width:118px;height:118px;border-radius:50%;background:" + BLUE + ";color:#fff;display:flex;align-items:center;justify-content:center}",
     ".talk:hover .disc{background:#1A47B8}",
     ".talk svg{width:50px;height:50px}",
     ".talk b{font-size:26px;font-weight:800;color:" + INK + ";margin-top:18px}",
@@ -188,6 +189,21 @@
     ".okpill svg{width:22px;height:22px;flex:none}",
     ".q{font-size:18px;font-weight:800;color:" + INK + ";margin-top:22px}",
     ".off{font-size:15px;color:#B42318;margin-top:14px;text-align:center}",
+    /* appel : bouton vert, raccrocher rouge, minuteur, exemples, garanties */
+    ".talk .halo.callh{background:#E6F4EA}.talk .disc.calld{background:" + CALL + "}.talk:hover .disc.calld{background:#17752F}",
+    ".talk small{font-size:16px;color:" + MUTED + ";margin-top:6px}",
+    ".pill .ph{position:absolute;left:48px;top:46px;width:24px;height:24px;border-radius:50%;background:" + CALL + ";border:2px solid #fff;",
+    "display:flex;align-items:center;justify-content:center}.pill .ph svg{width:13px;height:13px;color:#fff}.pill{position:fixed}",
+    ".ex{display:flex;flex-direction:column;gap:10px;margin-top:12px}",
+    ".exb{width:100%;text-align:left;background:" + SOFT + ";border:1.5px solid transparent;border-radius:14px;padding:10px 16px;",
+    "font-size:17px;line-height:1.3;font-style:italic;color:" + INK + "}.exb:hover{border-color:" + BLUE + ";background:#F7F9FE}",
+    ".guar{list-style:none;padding:0;margin:20px 0 0;display:flex;flex-direction:column;gap:10px;border-top:1px solid " + LINE + ";padding-top:16px}",
+    ".guar li{display:flex;gap:10px;align-items:flex-start;font-size:15.5px;line-height:1.35;color:" + INK + "}",
+    ".guar svg{width:19px;height:19px;flex:none;color:" + GREEN + ";margin-top:1px}",
+    ".mini{font-size:14px;color:" + MUTED + ";text-align:center;line-height:1.35}",
+    ".btn.red{background:" + RED + ";border-color:" + RED + ";color:#fff}.btn.red:hover{background:#A51F1F}",
+    ".btn svg{width:22px;height:22px}",
+    ".tm{font-variant-numeric:tabular-nums;font-weight:800}",
     /* petits écrans (portable 13") : tout tient sans défiler */
     "@media (max-height:820px){.head{padding:12px 20px}.head .av{width:52px;height:52px}.body{padding:18px 22px}",
     ".talk{margin-top:16px}.talk .halo{width:150px;height:150px}.talk .disc{width:118px;height:118px}.talk b{margin-top:12px;font-size:23px}",
@@ -211,6 +227,8 @@
     warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5L2.5 20h19L12 3.5z"/><path d="M12 10v4.5M12 17.3v.2"/></svg>',
     lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>',
     shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
+    phone: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.6 10.8a15.1 15.1 0 006.6 6.6l2.2-2.2a1 1 0 011-.25c1.1.37 2.3.57 3.6.57a1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1c0 1.3.2 2.5.57 3.6a1 1 0 01-.25 1L6.6 10.8z"/></svg>',
+    hangup: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .4-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85a1 1 0 01-1.41-.02L.29 13.08a1 1 0 010-1.41C3.34 8.77 7.46 7 12 7s8.66 1.77 11.71 4.67a1 1 0 010 1.41l-2.48 2.48a1 1 0 01-1.41.02 11.3 11.3 0 00-2.67-1.85 1 1 0 01-.56-.9v-3.1A15 15 0 0012 9z"/></svg>',
     info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.2"/></svg>'
   };
 
@@ -608,11 +626,12 @@
 
     if (scr === "closed") {
       var pill = el("button", "pill" + (state.call || state.busy ? " live" : ""));
-      pill.setAttribute("aria-label", "Talk to Colette");
+      pill.setAttribute("aria-label", "Call Colette");
       pill.appendChild(avatar());
+      var ph = el("span", "ph"); ph.appendChild(svg("phone")); pill.appendChild(ph);
       var t = el("span");
-      t.appendChild(el("b", null, "Talk to Colette"));
-      t.appendChild(el("small", null, state.busy ? "Working for you" : "Your assistant"));
+      t.appendChild(el("b", null, state.call || state.busy ? "Back to the call" : "Need help? Call Colette"));
+      t.appendChild(el("small", null, state.busy ? "Colette is working for you" : "She does it with you, by voice"));
       pill.appendChild(t);
       pill.onclick = function () { state.open = true; render(); send({ type: "open" }); };
       wrap.appendChild(pill);
@@ -658,8 +677,9 @@
       var live = state.call || state.busy, paused = state.status === "paused";
       var cb = el("div", "callbar" + (!live ? " ended" : paused ? " paused" : ""));
       var l = el("span"); l.appendChild(el("i"));
-      l.appendChild(document.createTextNode(!live ? "Call ended · mic off" : paused ? "Paused · mic off" : "Call in progress · mic on"));
+      l.appendChild(document.createTextNode(!live ? "Call ended" : paused ? "On hold · mic off" : "Call in progress"));
       cb.appendChild(l);
+      if (live) cb.appendChild(el("span", "tm", callClock()));
       side.appendChild(cb);
     }
 
@@ -686,25 +706,27 @@
   // ---- 02 · ouverte ----
   function home(body) {
     body.appendChild(el("h2", null, "Hello, I'm Colette."));
-    body.appendChild(el("p", "lead", "Just tell me what you'd like to do."));
+    body.appendChild(el("p", "lead", "I'll do it on the website for you, while we talk."));
     var talk = el("button", "talk");
-    var halo = el("span", "halo"), disc = el("span", "disc");
-    disc.appendChild(svg("mic")); halo.appendChild(disc); talk.appendChild(halo);
-    talk.appendChild(el("b", null, "Tap to talk"));
+    var halo = el("span", "halo callh"), disc = el("span", "disc calld");
+    disc.appendChild(svg("phone")); halo.appendChild(disc); talk.appendChild(halo);
+    talk.appendChild(el("b", null, "Call Colette"));
+    talk.appendChild(el("small", null, "No waiting · just talk normally"));
     talk.onclick = function () { state.call = true; render(); send({ type: "call" }); };
     body.appendChild(talk);
     var shortcuts = state.shortcuts || [];
     if (shortcuts.length) {
       body.appendChild(el("div", "sep"));
-      body.appendChild(el("div", "or", "Or choose directly:"));
-      var grid = el("div", "grid");
+      body.appendChild(el("div", "or", "You can say, for example:"));
+      var ex = el("div", "ex");
       shortcuts.forEach(function (s) {
-        var c = el("button", "chip", s.label);
+        var c = el("button", "exb", "\u201C" + (s.ask || s.label) + "\u201D");
         c.onclick = function () { state.call = true; render(); send({ type: "shortcut", id: s.id }); };
-        grid.appendChild(c);
+        ex.appendChild(c);
       });
-      body.appendChild(grid);
+      body.appendChild(ex);
     }
+    body.appendChild(guarantees());
   }
 
   // ---- 03 / 04 · conversation en continu ----
@@ -731,9 +753,42 @@
     body.appendChild(lis);
     var row = el("div", "row2");
     row.appendChild(button("sec", paused ? "Resume" : "Pause", function () { send({ type: paused ? "resume" : "pause" }); }));
-    row.appendChild(button("dark", "End call", function () { state.call = false; render(); send({ type: "hangup" }); }));
+    row.appendChild(hangButton("Hang up", function () { state.call = false; render(); send({ type: "hangup" }); }));
     foot.appendChild(row);
+    foot.appendChild(el("div", "mini", "Nothing changes without your \u201Cyes\u201D \u00B7 Say \u201Cstop\u201D at any time"));
   }
+
+  function hangButton(label, fn) {
+    var b = button("red", label, fn);
+    b.insertBefore(svg("hangup"), b.firstChild);
+    return b;
+  }
+
+  function guarantees() {
+    var ul = el("ul", "guar");
+    [["lock", "You log in yourself. Colette never sees your password."],
+     ["shield", "Nothing is changed or paid without your \u201Cyes\u201D."],
+     ["mic", "Say \u201Cstop\u201D at any time and she stops."]].forEach(function (g) {
+      var li = el("li"); li.appendChild(svg(g[0])); li.appendChild(el("span", null, g[1])); ul.appendChild(li);
+    });
+    return ul;
+  }
+
+  // Minuteur d'appel (local) : démarre au début de l'appel, mis à jour chaque seconde sans reconstruire.
+  var callStart = 0;
+  function callClock() {
+    var live = state.open && (state.call || state.busy);
+    if (!live) { callStart = 0; return ""; }
+    if (!callStart) callStart = Date.now();
+    var sec = Math.floor((Date.now() - callStart) / 1000);
+    return Math.floor(sec / 60) + ":" + ("0" + (sec % 60)).slice(-2);
+  }
+  setInterval(function () {
+    if (!root) return;
+    var t = root.querySelector(".tm");
+    if (t) t.textContent = callClock();
+    else if (!(state.call || state.busy)) callStart = 0;
+  }, 1000);
 
   // ---- 05 · navigue (H agit) ----
   function working(body, foot) {
@@ -771,8 +826,9 @@
     var row = el("div", "row2");
     // .hold : seuls boutons cliquables pendant que H agit (simple clic).
     row.appendChild(button("sec hold", paused ? "Resume" : "Pause", function () { send({ type: paused ? "resume" : "pause" }); }));
-    row.appendChild(button("dark hold", "Stop", function () { send({ type: "stop" }); }));
+    row.appendChild(button("red hold", "Stop", function () { send({ type: "stop" }); }));
     foot.appendChild(row);
+    foot.appendChild(el("div", "mini", "Nothing changes without your \u201Cyes\u201D"));
   }
 
   // ---- 06 · votre accord ----
@@ -814,7 +870,7 @@
     }
     var row = el("div", "row2");
     row.appendChild(button("sec", "New request", newSession));
-    row.appendChild(button("dark", "End call", function () { state.open = false; render(); send({ type: "later" }); }));
+    row.appendChild(hangButton("Hang up", function () { state.open = false; render(); send({ type: "later" }); }));
     foot.appendChild(row);
   }
 
