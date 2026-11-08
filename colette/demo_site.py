@@ -1,9 +1,12 @@
 """Local mock-up of the Free Mobile customer area, with a fictitious account, for the Colette demo.
 
-Served on http://localhost:8000 (standard library only). Possible tasks:
-- change plan (list of plans → summary → "Confirm plan change");
-- download the most recent bill (real PDF generated on the fly);
-- edit contact details (address, email, contact phone → "Save changes").
+Served on http://localhost:8000 (standard library only). Possible tasks (one skill per task):
+- log in / log out; cookie banner;
+- see the plan; change plan (plans → summary → "Confirm plan change"); cancel a scheduled plan change;
+- see usage; see bills; download a bill (real PDF generated on the fly);
+- see / edit contact details (address, email, contact phone → "Save changes"); change the password;
+- see options; activate / deactivate an option;
+- customer service: number and hours; ask for a callback; cancel the callback.
 
 Demo account: ID 12345678, password colette (shown nowhere on the site).
 Changes are kept in demo_data/account.json; /reset resets the account.
@@ -36,15 +39,34 @@ DEMO_LOGIN = "12345678"
 DEMO_PASSWORD = "colette"
 
 PLANS = {
-    "2e": {"name": "€2 Plan", "price": 2.00,
+    "2e": {"name": "€2 Plan", "price": 2.00, "data_gb": 0.05, "europe_gb": 0,
            "details": "2 hours of calls · Unlimited texts and MMS · 50 MB of data"},
-    "serie": {"name": "Free Series 120 GB", "price": 9.99,
+    "serie": {"name": "Free Series 120 GB", "price": 9.99, "data_gb": 120, "europe_gb": 12,
               "details": "Unlimited calls, texts and MMS · 120 GB on 4G"},
-    "5g": {"name": "Free 5G 300 GB Plan", "price": 19.99,
+    "5g": {"name": "Free 5G 300 GB Plan", "price": 19.99, "data_gb": 300, "europe_gb": 35,
            "details": "Unlimited calls, texts and MMS · 300 GB on 5G · 35 GB from Europe"},
-    "max": {"name": "Free 5G Max 350 GB Plan", "price": 29.99,
+    "max": {"name": "Free 5G Max 350 GB Plan", "price": 29.99, "data_gb": 350, "europe_gb": 35,
             "details": "Unlimited calls, texts and MMS · 350 GB on 5G · 35 GB from 100 destinations"},
 }
+
+OPTIONS = {
+    "voicemail": {"name": "Visual voicemail", "price": 0.0,
+                  "details": "Listen to your voice messages in the order you choose."},
+    "blocking": {"name": "Premium-rate number blocking", "price": 0.0,
+                 "details": "Blocks calls and texts to paid numbers (08, 3BIS…)."},
+    "data_europe": {"name": "Europe Data +10 GB option", "price": 5.00,
+                    "details": "10 GB more every month, to use from Europe."},
+    "international": {"name": "International Calls option", "price": 3.99,
+                      "details": "Unlimited calls to landlines in 100 destinations."},
+    "max": {"name": "Max option", "price": 9.99,
+            "details": "35 GB from 100 destinations and streaming services included."},
+}
+
+CALLBACK_REASONS = ["My bill", "My plan", "A technical problem", "Other"]
+CALLBACK_SLOTS = [(10, 12), (14, 16), (18, 20)]  # callback time slots, hours
+
+# Fictitious usage for the current month (shown as is).
+USAGE = {"data_gb": 42.7, "europe_gb": 1.2, "calls": "3h12", "texts": 87, "mms": 4, "extra": 0.0}
 
 DEFAULT_ACCOUNT = {
     "holder": "Géraldine Martin",
@@ -56,6 +78,9 @@ DEFAULT_ACCOUNT = {
     "city": "Paris",
     "email": "geraldine.martin@exemple.fr",
     "contact_phone": "01 43 00 00 00",
+    "password": DEMO_PASSWORD,
+    "options": ["voicemail"],
+    "callback": None,  # {"reason", "slot", "phone"}: callback scheduled with customer service
     "history": [],
 }
 
@@ -76,6 +101,35 @@ def date_en(d: dt.date) -> str:
     return f"{MONTHS[d.month - 1]} {d.day}, {d.year}"
 
 
+def gb(x: float) -> str:
+    return f"{x:.1f} GB" if x >= 1 else f"{round(x * 1000)} MB"
+
+
+def callback_slots(now: Optional[dt.datetime] = None) -> list[str]:
+    """The next 4 callback slots (Monday–Saturday), e.g. "Today from 2 pm to 4 pm"."""
+    now = now or dt.datetime.now()
+
+    def h(x: int) -> str:
+        return f"{x - 12} pm" if x > 12 else ("12 pm" if x == 12 else f"{x} am")
+
+    out, day = [], now.date()
+    while len(out) < 4:
+        if day.weekday() < 6:  # not on Sunday
+            for start, end in CALLBACK_SLOTS:
+                if day > now.date() or start > now.hour:
+                    if day == now.date():
+                        label = "Today"
+                    elif day == now.date() + dt.timedelta(days=1):
+                        label = "Tomorrow"
+                    else:
+                        label = f"On {date_en(day)}"
+                    out.append(f"{label} from {h(start)} to {h(end)}")
+                    if len(out) == 4:
+                        break
+        day += dt.timedelta(days=1)
+    return out
+
+
 # ---- account data ----------------------------------------------------------
 class Store:
     def __init__(self, path: Path = DATA_PATH) -> None:
@@ -87,6 +141,8 @@ class Store:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             if "account" in data and "secret" in data:
+                # account saved by an older version: fill in the fields added since
+                data["account"] = {**copy.deepcopy(DEFAULT_ACCOUNT), **data["account"]}
                 return data
         except (OSError, ValueError):
             pass
@@ -217,7 +273,7 @@ th{color:#777;font-weight:normal;font-size:12px;text-transform:uppercase}
 .ok{background:#e7f5e8;border:1px solid #9bd3a0;color:#1e6b26;padding:12px 14px;border-radius:4px;margin-bottom:16px}
 .err{background:#fdeaea;border:1px solid #f0a3a3;color:#9b1c1c;padding:12px 14px;border-radius:4px;margin-bottom:16px}
 .info{background:#eef4fb;border:1px solid #b9d0ea;color:#24476b;padding:12px 14px;border-radius:4px;margin-bottom:16px}
-label{display:block;font-size:13px;color:#555;margin:12px 0 4px}input[type=text],input[type=password],input[type=email]{
+label{display:block;font-size:13px;color:#555;margin:12px 0 4px}select,input[type=text],input[type=password],input[type=email]{
 width:100%;max-width:420px;padding:9px 10px;border:1px solid #bbb;border-radius:3px;font-size:15px}
 .plan{display:flex;justify-content:space-between;align-items:center;gap:16px;border:1px solid #e3e3e3;border-radius:4px;padding:14px 16px;margin-bottom:10px}
 .plan.cur{border-color:#cd1e25;background:#fff7f7}.tag{background:#cd1e25;color:#fff;font-size:11px;padding:2px 7px;border-radius:10px;margin-left:6px}
@@ -307,18 +363,23 @@ def p_home(a: dict) -> str:
 <p class="muted">{e(plan["details"])}</p><a class="btn sec" href="/account/forfait">Manage my plan</a></div>
 <div class="card"><h2>My latest bill</h2><p>Bill for {e(last["period"])}</p><div class="price">{euros(last["amount"])}</div>
 <p class="muted">Issued on {date_en(last["issued"])} · Paid by direct debit</p><a class="btn sec" href="/account/factures">See my bills</a></div>
-<div class="card"><h2>My usage</h2><p>Data: <b>42.7 GB</b> / 300 GB</p><p>Calls: unlimited · Texts: unlimited</p>
-<p class="muted">Since the 1st of the month</p></div>
+<div class="card"><h2>My usage</h2><p>Data: <b>{gb(USAGE["data_gb"])}</b> / {gb(plan["data_gb"])}</p>
+<p>Calls: unlimited · Texts: unlimited</p><p class="muted">Since the 1st of the month</p>
+<a class="btn sec" href="/account/conso">See the details</a></div>
 <div class="card promo"><h2>New: the Max option</h2><p>More data abroad and included services.</p>
 <a href="/account/options">Learn more</a></div>
 </div>""", a, "accueil")
 
 
-def p_forfait(a: dict) -> str:
+def p_forfait(a: dict, cancelled: bool = False) -> str:
     pending = ""
+    if cancelled:
+        pending = '<div class="ok">The scheduled plan change has been cancelled. You keep your current plan.</div>'
     if a.get("pending_plan"):
         pending = (f'<div class="info">Change scheduled to <b>{e(PLANS[a["pending_plan"]]["name"])}</b> '
-                   f'on {date_en(first_of_next_month())}.</div>')
+                   f'on {date_en(first_of_next_month())}.'
+                   '<form method="post" action="/account/forfait/annuler" style="margin-top:10px">'
+                   '<button class="btn sec" type="submit">Cancel this change</button></form></div>')
     return page("My plan", f"""<h1>My plan</h1>{pending}<div class="card"><h2>Current plan</h2>
 {plan_block(a["plan"], a, choose=False)}<p class="muted">Line {e(a["line"])} · Commitment: no commitment</p>
 <div class="actions"><a class="btn" href="/account/forfait/changer">Change plan</a>
@@ -361,18 +422,119 @@ def p_factures(a: dict) -> str:
         for i in invoices(a))
     return page("Usage & bills", f"""<h1>Usage &amp; bills</h1>
 <div class="card"><h2>My bills</h2><table><tr><th>Period</th><th>Issued on</th><th>No.</th><th>Amount</th><th></th></tr>
-{rows}</table></div><div class="card"><h2>My usage this month</h2><p>Data: 42.7 GB · Calls: 3h12 · Texts: 87</p></div>""",
-                a, "factures")
+{rows}</table></div><div class="card"><h2>My usage this month</h2>
+<p>Data: {gb(USAGE["data_gb"])} · Calls: {USAGE["calls"]} · Texts: {USAGE["texts"]}</p>
+<a class="btn sec" href="/account/conso">See my usage in detail</a></div>""", a, "factures")
 
 
-def p_infos(a: dict, ok: bool = False) -> str:
+def p_conso(a: dict) -> str:
+    plan = PLANS[a["plan"]]
+    today = dt.date.today()
+    rows = [
+        ("Data in France", gb(USAGE["data_gb"]), gb(plan["data_gb"])),
+        ("Data from Europe", gb(USAGE["europe_gb"]), gb(plan["europe_gb"]) if plan["europe_gb"] else "Not included"),
+        ("Calls", USAGE["calls"], "Unlimited" if a["plan"] != "2e" else "2 hours"),
+        ("Texts", str(USAGE["texts"]), "Unlimited"),
+        ("MMS", str(USAGE["mms"]), "Unlimited"),
+        ("Extra charges", euros(USAGE["extra"]), "—"),
+    ]
+    body = "".join(f"<tr><td>{e(k)}</td><td><b>{e(u)}</b></td><td>{e(q)}</td></tr>" for k, u, q in rows)
+    pct = min(100, round(100 * USAGE["data_gb"] / plan["data_gb"]))
+    return page("My usage", f"""<h1>My usage</h1><div class="card">
+<h2>From {date_en(today.replace(day=1))} to {date_en(today)}</h2>
+<p>Data in France: <b>{pct}%</b> of your plan used.</p>
+<table><tr><th>Usage</th><th>Used</th><th>Included in the plan</th></tr>{body}</table>
+<p class="muted">Usage may take up to 48 hours to appear.</p></div>
+<a href="/account/factures">← Back to Usage &amp; bills</a>""", a, "factures")
+
+
+def p_infos(a: dict, ok: bool = False, pwd: bool = False) -> str:
     msg = '<div class="ok">Your contact details have been updated.</div>' if ok else ""
+    if pwd:
+        msg += '<div class="ok">Your password has been changed.</div>'
+
     return page("My details", f"""<h1>My details</h1>{msg}<div class="card"><h2>My contact details</h2>
 <dl><dt>Account holder</dt><dd>{e(a["holder"])}</dd><dt>Postal address</dt><dd>{e(a["address"])}<br>{e(a["postcode"])} {e(a["city"])}</dd>
 <dt>Email address</dt><dd>{e(a["email"])}</dd><dt>Contact phone</dt><dd>{e(a["contact_phone"])}</dd></dl>
 <div class="actions"><a class="btn" href="/account/infos/modifier">Edit my contact details</a></div></div>
 <div class="card"><h2>Password</h2><p class="muted">For your security, change your password regularly.</p>
-<a class="btn sec" href="#">Change my password</a></div>""", a, "infos")
+<a class="btn sec" href="/account/infos/motdepasse">Change my password</a></div>""", a, "infos")
+
+
+def p_password(a: dict, error: str = "") -> str:
+    err = f'<div class="err">{e(error)}</div>' if error else ""
+    return page("Change my password", f"""<h1>Change my password</h1>{err}<div class="card">
+<p class="muted">The new password must have at least 8 characters, including at least one digit.</p>
+<form method="post" action="/account/infos/motdepasse">
+<label for="current">Current password</label><input type="password" id="current" name="current" autocomplete="current-password">
+<label for="new">New password</label><input type="password" id="new" name="new" autocomplete="new-password">
+<label for="confirm">Confirm the new password</label><input type="password" id="confirm" name="confirm" autocomplete="new-password">
+<div class="actions"><button class="btn" type="submit">Save the new password</button>
+<a class="btn grey" href="/account/infos">Cancel</a></div></form></div>""", a, "infos")
+
+
+def p_options(a: dict, msg: str = "") -> str:
+    ok = f'<div class="ok">{e(msg)}</div>' if msg else ""
+    rows = []
+    for key, o in OPTIONS.items():
+        on = key in a["options"]
+        price = "Free" if not o["price"] else euros(o["price"]) + "/month"
+        action = ("desactiver", "Deactivate", "btn sec") if on else ("activer", "Activate", "btn")
+        rows.append(
+            f'<div class="plan{" cur" if on else ""}"><div><b>{e(o["name"])}</b>'
+            f'{"<span class=tag>Active</span>" if on else ""}<div class="muted">{e(o["details"])}</div></div>'
+            f'<div style="text-align:right"><div><b>{price}</b></div>'
+            f'<div class="muted">{"Active" if on else "Not active"}</div>'
+            f'<a class="{action[2]}" href="/account/options/recap?option={key}&amp;action={action[0]}">{action[1]}</a>'
+            f'</div></div>')
+    return page("My options", f"""<h1>My options</h1>{ok}<div class="card">
+<p>Activate or deactivate options on your line {e(a["line"])}. Paid options are added to your next bill,
+pro rata.</p>{"".join(rows)}</div>""", a, "options")
+
+
+def p_option_recap(a: dict, key: str, action: str) -> str:
+    o = OPTIONS[key]
+    on = action == "activer"
+    price = "Free" if not o["price"] else euros(o["price"]) + "/month"
+    verb = "Confirm activation" if on else "Confirm deactivation"
+    return page("Summary", f"""<h1>{"Activate" if on else "Deactivate"} an option</h1><div class="card">
+<dl><dt>Option</dt><dd>{e(o["name"])}</dd><dt>Price</dt><dd>{price}</dd>
+<dt>Takes effect</dt><dd>Immediately</dd><dt>Line</dt><dd>{e(a["line"])}</dd></dl>
+<p class="muted" style="margin-top:16px">{"The price is added to your next bill, pro rata for the current month."
+    if on and o["price"] else "No fee."}</p>
+<form method="post" action="/account/options/valider"><input type="hidden" name="option" value="{e(key)}">
+<input type="hidden" name="action" value="{e(action)}">
+<div class="actions"><button class="btn" type="submit">{verb}</button>
+<a class="btn grey" href="/account/options">Cancel</a></div></form></div>""", a, "options")
+
+
+def p_aide(a: dict, error: str = "", ok: bool = False, cancelled: bool = False) -> str:
+    msg = f'<div class="err">{e(error)}</div>' if error else ""
+    if cancelled:
+        msg += '<div class="ok">Your callback request has been cancelled.</div>'
+    cb = a.get("callback")
+    if cb:
+        callback = (f'<div class="{"ok" if ok else "info"}">An advisor will call you back on <b>{e(cb["phone"])}</b> '
+                    f'<b>{e(cb["slot"][0].lower() + cb["slot"][1:] if not cb["slot"].startswith("On") else cb["slot"])}</b> '
+                    f'(reason: {e(cb["reason"])}).'
+                    '<form method="post" action="/account/aide/annuler" style="margin-top:10px">'
+                    '<button class="btn sec" type="submit">Cancel the callback</button></form></div>')
+        form = ""
+    else:
+        callback = ""
+        reasons = "".join(f"<option>{e(r)}</option>" for r in CALLBACK_REASONS)
+        slots = "".join(f"<option>{e(s)}</option>" for s in callback_slots())
+        form = f"""<form method="post" action="/account/aide/rappel">
+<label for="reason">Reason for your request</label><select id="reason" name="reason">{reasons}</select>
+<label for="slot">Callback time</label><select id="slot" name="slot">{slots}</select>
+<label for="phone">Number to call back</label><input type="text" id="phone" name="phone" value="{e(a["line"])}">
+<div class="actions"><button class="btn" type="submit">Ask to be called back</button></div></form>"""
+    return page("Help", f"""<h1>Help</h1>{msg}
+<div class="card"><h2>Call customer service</h2><div class="price">3244</div>
+<p>From your Free mobile: free call. From another phone: free service + price of a call.</p>
+<p class="muted">Monday to Saturday, 8 am to 10 pm.</p></div>
+<div class="card"><h2>Get a free callback</h2>
+<p class="muted">An advisor calls you back at the time of your choice.</p>{callback}{form}</div>""", a, "aide")
 
 
 def p_modifier(a: dict, values: Optional[dict] = None, error: str = "") -> str:
@@ -390,10 +552,6 @@ def p_modifier(a: dict, values: Optional[dict] = None, error: str = "") -> str:
 {field("email", "Email address", "email")}{field("contact_phone", "Contact phone")}
 <div class="actions"><button class="btn" type="submit">Save changes</button>
 <a class="btn grey" href="/account/infos">Cancel</a></div></form></div>""", a, "infos")
-
-
-def p_simple(a: dict, title: str, active: str, text: str) -> str:
-    return page(title, f'<h1>{e(title)}</h1><div class="card"><p>{text}</p></div>', a, active)
 
 
 # ---- server ----------------------------------------------------------------------
@@ -478,7 +636,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/account/home":
                 return self._page(p_home(a))
             if path == "/account/forfait":
-                return self._page(p_forfait(a))
+                return self._page(p_forfait(a, cancelled="annule" in q))
             if path == "/account/forfait/changer":
                 return self._page(p_changer(a))
             if path == "/account/forfait/recap":
@@ -499,16 +657,28 @@ class Handler(BaseHTTPRequestHandler):
                 self.store.save()
                 return self._send(invoice_pdf(a, inv), 200, "application/pdf", {
                     "Content-Disposition": f'attachment; filename="Bill_FreeMobile_{inv["id"]}.pdf"'})
+            if path == "/account/conso":
+                return self._page(p_conso(a))
             if path == "/account/infos":
-                return self._page(p_infos(a, ok="ok" in q))
+                return self._page(p_infos(a, ok="ok" in q, pwd="pwd" in q))
             if path == "/account/infos/modifier":
                 return self._page(p_modifier(a))
+            if path == "/account/infos/motdepasse":
+                return self._page(p_password(a))
             if path == "/account/options":
-                return self._page(p_simple(a, "My options", "options",
-                                           "No active options on your line. Options will be available here soon."))
+                key, act = (q.get("option") or [""])[0], (q.get("ok") or [""])[0]
+                msg = ""
+                if key in OPTIONS and act in ("activer", "desactiver"):
+                    msg = f"The option \u201c{OPTIONS[key]['name']}\u201d is {'activated' if act == 'activer' else 'deactivated'}."
+                return self._page(p_options(a, msg))
+            if path == "/account/options/recap":
+                key, act = (q.get("option") or [""])[0], (q.get("action") or [""])[0]
+                if key not in OPTIONS or act not in ("activer", "desactiver") or \
+                        (act == "activer") == (key in a["options"]):
+                    return self._redirect("/account/options")
+                return self._page(p_option_recap(a, key, act))
             if path == "/account/aide":
-                return self._page(p_simple(a, "Help", "aide",
-                                           "Need help? Call 3244 (free service + price of a call)."))
+                return self._page(p_aide(a, ok="ok" in q, cancelled="annule" in q))
         self._page(page("Page not found", "<div class='card'><h1>Page not found</h1>"
                         "<a href='/account/'>Back to home</a></div>", a if self._logged_in() else None), 404)
 
@@ -519,7 +689,8 @@ class Handler(BaseHTTPRequestHandler):
             nxt = f.get("next") or "/account/"
             if not nxt.startswith("/") or nxt.startswith("//"):
                 nxt = "/account/"
-            if f.get("login", "").replace(" ", "") == DEMO_LOGIN and f.get("password") == DEMO_PASSWORD:
+            if f.get("login", "").replace(" ", "") == DEMO_LOGIN and \
+                    hmac.compare_digest(f.get("password", ""), self.store.account.get("password") or DEMO_PASSWORD):
                 age = "; Max-Age=2592000" if f.get("remember") else ""
                 return self._redirect(nxt, f"fm_session={self.store.token()}; Path=/; HttpOnly; SameSite=Lax{age}")
             return self._page(p_login("Incorrect ID or password.", nxt), 401)
@@ -535,6 +706,59 @@ class Handler(BaseHTTPRequestHandler):
                     self.store.log(f"plan changed to {PLANS[key]['name']}")
                     self.store.save()
                 return self._redirect("/account/forfait/confirmation")
+            if path == "/account/forfait/annuler":
+                if a.get("pending_plan"):
+                    self.store.log(f"change to {PLANS[a['pending_plan']]['name']} cancelled")
+                    a["pending_plan"] = None
+                    self.store.save()
+                return self._redirect("/account/forfait?annule=1")
+            if path == "/account/infos/motdepasse":
+                cur, new, conf = f.get("current", ""), f.get("new", ""), f.get("confirm", "")
+                error = ""
+                if not hmac.compare_digest(cur, a.get("password") or DEMO_PASSWORD):
+                    error = "The current password is incorrect."
+                elif len(new) < 8 or not re.search(r"\d", new):
+                    error = "The new password must have at least 8 characters, including at least one digit."
+                elif new != conf:
+                    error = "The two new passwords do not match."
+                elif new == cur:
+                    error = "The new password must be different from the current one."
+                if error:  # never send a password back in the page
+                    return self._page(p_password(a, error), 400)
+                a["password"] = new
+                self.store.log("password changed")
+                self.store.save()
+                return self._redirect("/account/infos?pwd=1")
+            if path == "/account/options/valider":
+                key, act = f.get("option", ""), f.get("action", "")
+                if key in OPTIONS and act == "activer" and key not in a["options"]:
+                    a["options"].append(key)
+                elif key in OPTIONS and act == "desactiver" and key in a["options"]:
+                    a["options"].remove(key)
+                else:
+                    return self._redirect("/account/options")
+                self.store.log(f"option {OPTIONS[key]['name']}: {act}")
+                self.store.save()
+                return self._redirect(f"/account/options?option={key}&ok={act}")
+            if path == "/account/aide/rappel":
+                reason, slot, phone = f.get("reason", ""), f.get("slot", ""), f.get("phone", "")
+                error = ""
+                if reason not in CALLBACK_REASONS or slot not in callback_slots():
+                    error = "Choose a reason and a time from the lists."
+                elif not re.fullmatch(r"(?:\+33|0)\d{9}", re.sub(r"[\s.\-]", "", phone)):
+                    error = "The number to call back is not valid."
+                if error:
+                    return self._page(p_aide(a, error=error), 400)
+                a["callback"] = {"reason": reason, "slot": slot, "phone": phone}
+                self.store.log(f"callback requested: {slot}")
+                self.store.save()
+                return self._redirect("/account/aide?ok=1")
+            if path == "/account/aide/annuler":
+                if a.get("callback"):
+                    a["callback"] = None
+                    self.store.log("callback cancelled")
+                    self.store.save()
+                return self._redirect("/account/aide?annule=1")
             if path == "/account/infos/modifier":
                 v = {k: f.get(k, "") for k in ("address", "postcode", "city", "email", "contact_phone")}
                 error = ""

@@ -109,7 +109,7 @@ def list_shortcuts(directory: Optional[Path] = None) -> list[dict]:
     return [item for _, item in sorted(items, key=lambda x: (x[0], x[1]["label"]))]
 
 
-VIEW_WORDS = ("see", "check", "view", "look at", "show me", "find out", "what is", "what s", "read",
+VIEW_WORDS = ("see", "check", "view", "give me", "tell me", "how much", "look at", "show me", "find out", "what is", "what s", "read",
               "know", "get my", "voir", "consulter", "récupérer", "recuperer", "afficher", "regarder", "connaître",
               "connaitre", "vérifier", "verifier", "lire", "savoir", "quelle est", "quel est", "retrouver")
 CHANGE_WORDS = ("change", "update", "modify", "edit", "replace", "correct", "switch", "move to",
