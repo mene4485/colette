@@ -1248,6 +1248,11 @@
   }
 
   function connect() {
+    if (hasBinding()) {  // canal local CDP disponible : jamais de WebSocket (bloqué depuis free.fr)
+      if (ws) { try { ws.onclose = null; ws.close(); } catch (e) { /* ignore */ } ws = null; }
+      send({ type: "hello" });
+      return;
+    }
     try { ws = new WebSocket(WS_URL); } catch (e) { setTimeout(connect, 1000); return; }
     ws.binaryType = "arraybuffer";
     ws.onopen = function () {
@@ -1279,7 +1284,9 @@
       } catch (e) { /* ignore */ }
     };
     ws.onclose = function () {
-      connected = false; ws = null; render();
+      ws = null;
+      if (hasBinding()) { send({ type: "hello" }); return; }  // le canal local a pris le relais
+      connected = false; render();
       if (!wantConn && !restartCall) return;  // session rendue volontairement : on se reconnectera au prochain geste
       setTimeout(function () { if (!ws) connect(); }, busyServer ? 15000 : restartCall ? 300 : (HOSTED ? 2000 : 1000));
     };
@@ -1313,7 +1320,13 @@
   function start() {
     build();
     if (hasBinding()) send({ type: "hello" });
-    else if (!HOSTED) connect();  // en ligne : connexion au premier geste (ensureConn)
+    else if (!HOSTED) {
+      // le canal CDP peut arriver un peu après le script : on l'attend avant de tenter le WebSocket
+      var tries = 0, wait = setInterval(function () {
+        if (hasBinding()) { clearInterval(wait); send({ type: "hello" }); }
+        else if (++tries >= 15) { clearInterval(wait); connect(); }
+      }, 100);
+    }
     setInterval(mount, 1000);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
